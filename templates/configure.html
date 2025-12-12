@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Configure Columns - Email Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="progress-steps">
+        <div class="step completed">1. Upload CSV</div>
+        <div class="step active">2. Configure</div>
+        <div class="step">3. Validate</div>
+        <div class="step">4. Compose</div>
+        <div class="step">5. Send</div>
+    </div>
+
+    <h2>Configure Your Columns</h2>
+    <p class="subtitle">Select which columns contain email addresses and names. We've auto-detected the most likely columns for you.</p>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{{ total_rows }}</div>
+            <div class="stat-label">Total Contacts</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ columns|length }}</div>
+            <div class="stat-label">Columns Found</div>
+        </div>
+    </div>
+
+    <form action="{{ url_for('set_columns') }}" method="POST" class="config-form">
+        <div class="form-group">
+            <label for="email_col">Email Column *</label>
+            <select name="email_col" id="email_col" required>
+                <option value="">-- Select Column --</option>
+                {% for col in columns %}
+                    <option value="{{ col }}" {% if col == email_col %}selected{% endif %}>{{ col }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="name_col">Name Column (Optional)</label>
+            <select name="name_col" id="name_col">
+                <option value="">-- No Personalization --</option>
+                {% for col in columns %}
+                    <option value="{{ col }}" {% if col == name_col %}selected{% endif %}>{{ col }}</option>
+                {% endfor %}
+            </select>
+            <p class="help-text">If selected, you can use {{'{{'}}FirstName{{'}}'}} or {{'{{'}}Name{{'}}'}} in your email content</p>
+        </div>
+
+        <div class="button-group">
+            <a href="{{ url_for('index') }}" class="btn-secondary">← Back</a>
+            <button type="submit" class="btn-primary">Continue to Validation →</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

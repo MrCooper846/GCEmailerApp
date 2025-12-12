@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Upload CSV - Email Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="progress-steps">
+        <div class="step active">1. Upload CSV</div>
+        <div class="step">2. Configure</div>
+        <div class="step">3. Validate</div>
+        <div class="step">4. Compose</div>
+        <div class="step">5. Send</div>
+    </div>
+
+    <h2>Upload Your Contact List</h2>
+    <p class="subtitle">Upload a CSV file containing your email contacts. The file should include at least an email column and optionally a name column for personalization.</p>
+
+    <form action="{{ url_for('upload_csv') }}" method="POST" enctype="multipart/form-data" class="upload-form">
+        <div class="upload-area" id="uploadArea">
+            <svg class="upload-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <p class="upload-text">Drag and drop your CSV file here or click to browse</p>
+            <input type="file" name="csv_file" id="csvFile" accept=".csv" required>
+        </div>
+
+        <div id="fileInfo" class="file-info" style="display: none;">
+            <p><strong>Selected file:</strong> <span id="fileName"></span></p>
+        </div>
+
+        <button type="submit" class="btn-primary btn-large">Upload and Continue</button>
+    </form>
+
+    <div class="info-box">
+        <h3>💡 Tips</h3>
+        <ul>
+            <li>CSV file should have a header row with column names</li>
+            <li>Include an "Email" column (will be auto-detected)</li>
+            <li>Include a "FirstName" or "Name" column for personalization (optional)</li>
+            <li>Maximum file size: 16 MB</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const uploadArea = document.getElementById('uploadArea');
+const fileInput = document.getElementById('csvFile');
+const fileInfo = document.getElementById('fileInfo');
+const fileName = document.getElementById('fileName');
+
+// Click to browse
+uploadArea.addEventListener('click', () => fileInput.click());
+
+// Drag and drop
+uploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadArea.classList.add('dragover');
+});
+
+uploadArea.addEventListener('dragleave', () => {
+    uploadArea.classList.remove('dragover');
+});
+
+uploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadArea.classList.remove('dragover');
+    
+    if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        showFileInfo();
+    }
+});
+
+// File selection
+fileInput.addEventListener('change', showFileInfo);
+
+function showFileInfo() {
+    if (fileInput.files.length) {
+        fileName.textContent = fileInput.files[0].name;
+        fileInfo.style.display = 'block';
+    }
+}
+</script>
+{% endblock %}

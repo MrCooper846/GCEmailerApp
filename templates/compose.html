@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Compose Email - Email Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="progress-steps">
+        <div class="step completed">1. Upload CSV</div>
+        <div class="step completed">2. Configure</div>
+        <div class="step completed">3. Validate</div>
+        <div class="step active">4. Compose</div>
+        <div class="step">5. Send</div>
+    </div>
+
+    <h2>Compose Your Email</h2>
+    <p class="subtitle">Create your email message. You'll send to <strong>{{ valid_count }}</strong> validated recipients.</p>
+
+    {% if session.get('google_email') %}
+    <div class="alert alert-success">
+        Sending as {{ session.get('google_email') }}
+        <a href="{{ url_for('logout_google') }}" class="btn-secondary" style="margin-left: 10px;">Switch account</a>
+    </div>
+    {% else %}
+    <div class="alert alert-warning">
+        Sign in with your Google Workspace account to send.
+        <a href="{{ url_for('login_google') }}" class="btn-primary" style="margin-left: 10px;">Sign in with Google</a>
+    </div>
+    {% endif %}
+
+    <form action="{{ url_for('preview_email') }}" method="POST" class="compose-form">
+        <div class="form-group">
+            <label for="subject">Email Subject *</label>
+            <input type="text" name="subject" id="subject" required 
+                   placeholder="e.g., Upcoming events across MENA — 2025-12-11"
+                   value="{{ session.get('subject', '') }}">
+        </div>
+
+        <div class="form-group">
+            <label for="html_content">HTML Email Content *</label>
+            {% if name_col %}
+            <p class="help-text">💡 Use <code>{{'{{'}}FirstName{{'}}'}}</code> or <code>{{'{{'}}Name{{'}}'}}</code> for personalization</p>
+            {% endif %}
+            <textarea name="html_content" id="html_content" rows="15" required 
+                      placeholder="Enter your HTML email content here...">{{ session.get('html_content', '') or default_html }}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="text_content">Plain Text Version *</label>
+            <p class="help-text">Fallback for email clients that don't support HTML</p>
+            <textarea name="text_content" id="text_content" rows="10" required 
+                      placeholder="Enter plain text version here...">{{ session.get('text_content', '') or default_text }}</textarea>
+        </div>
+
+        <div class="button-group">
+            <a href="{{ url_for('validate_emails') }}" class="btn-secondary">← Back</a>
+            <button type="submit" class="btn-primary">Preview Email →</button>
+        </div>
+    </form>
+
+    <div class="info-box">
+        <h3>💡 Tips for Better Emails</h3>
+        <ul>
+            <li>Keep subject lines under 50 characters for better open rates</li>
+            <li>Personalize with recipient names using {{'{{'}}FirstName{{'}}'}}</li>
+            <li>Include a clear call-to-action</li>
+            <li>Test your HTML in the preview before sending</li>
+            <li>Always provide an unsubscribe option</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% set default_html %}
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2>Dear {{FirstName}},</h2>
+        
+        <p>I hope this email finds you well.</p>
+        
+        <p>Your email content goes here...</p>
+        
+        <p>
+            <a href="https://meetings.hubspot.com/ak52" 
+               style="display: inline-block; padding: 12px 24px; background-color: #007bff; 
+                      color: white; text-decoration: none; border-radius: 5px;">
+                Book a Meeting
+            </a>
+        </p>
+        
+        <p>Kind regards,<br>
+        Your Name</p>
+        
+        <hr style="margin-top: 30px; border: none; border-top: 1px solid #ddd;">
+        <p style="font-size: 12px; color: #666;">
+            If you'd like to unsubscribe, <a href="#">click here</a>
+        </p>
+    </div>
+</body>
+</html>
+{% endset %}
+
+{% set default_text %}
+Dear {{FirstName}},
+
+I hope this email finds you well.
+
+Your email content goes here...
+
+Book a Meeting: https://meetings.hubspot.com/ak52
+
+Kind regards,
+Your Name
+
+---
+If you'd like to unsubscribe, please reply to this email.
+{% endset %}

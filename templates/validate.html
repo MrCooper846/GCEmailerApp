@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Validate Emails - Email Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="progress-steps">
+        <div class="step completed">1. Upload CSV</div>
+        <div class="step completed">2. Configure</div>
+        <div class="step active">3. Validate</div>
+        <div class="step">4. Compose</div>
+        <div class="step">5. Send</div>
+    </div>
+
+    <h2>Email Validation</h2>
+    <p class="subtitle">We'll check each email address to ensure it's valid and won't bounce. This may take a few minutes.</p>
+
+    <div id="validationStatus" class="validation-status">
+        <div class="spinner"></div>
+        <p id="statusText">Preparing validation...</p>
+        <div class="progress-bar">
+            <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <p id="progressText">0 / {{ total_rows }} emails checked</p>
+    </div>
+
+    <div id="validationResults" class="validation-results" style="display: none;">
+        <div class="stats-grid">
+            <div class="stat-card stat-success">
+                <div class="stat-value" id="validCount">0</div>
+                <div class="stat-label">✓ Valid Emails</div>
+            </div>
+            <div class="stat-card stat-danger">
+                <div class="stat-value" id="invalidCount">0</div>
+                <div class="stat-label">✗ Invalid/Risky</div>
+            </div>
+        </div>
+
+        <div class="button-group">
+            <a href="{{ url_for('configure_columns') }}" class="btn-secondary">← Back</a>
+            <a href="{{ url_for('review_emails') }}" class="btn-primary">Review Emails →</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Auto-start validation on page load
+window.addEventListener('load', () => {
+    startValidation();
+});
+
+async function startValidation() {
+    const statusText = document.getElementById('statusText');
+    const progressText = document.getElementById('progressText');
+    const progressFill = document.getElementById('progressFill');
+    
+    statusText.textContent = 'Validating email addresses... This may take a few minutes.';
+    
+    // Simulate progress updates while waiting
+    let fakeProgress = 0;
+    const progressInterval = setInterval(() => {
+        if (fakeProgress < 90) {
+            fakeProgress += Math.random() * 3;
+            progressFill.style.width = fakeProgress + '%';
+            progressText.textContent = `Checking emails... ${Math.floor(fakeProgress)}%`;
+        }
+    }, 500);
+    
+    try {
+        console.log('Starting validation request...');
+        const response = await fetch('{{ url_for("api_validate") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        clearInterval(progressInterval);
+        console.log('Validation response received');
+        
+        const data = await response.json();
+        console.log('Validation data:', data);
+        
+        if (data.success) {
+            // Update progress
+            progressFill.style.width = '100%';
+            progressText.textContent = `${data.total} / ${data.total} emails checked`;
+            statusText.textContent = 'Validation complete!';
+            
+            // Show results
+            document.getElementById('validCount').textContent = data.valid;
+            document.getElementById('invalidCount').textContent = data.problematic;
+            document.getElementById('validationStatus').style.display = 'none';
+            document.getElementById('validationResults').style.display = 'block';
+        } else {
+            progressFill.style.width = '100%';
+            progressFill.style.background = '#dc3545';
+            statusText.textContent = 'Error: ' + (data.error || 'Unknown error');
+            statusText.style.color = '#dc3545';
+            console.error('Validation error:', data.error);
+        }
+    } catch (error) {
+        clearInterval(progressInterval);
+        progressFill.style.width = '100%';
+        progressFill.style.background = '#dc3545';
+        statusText.textContent = 'Error: ' + error.message;
+        statusText.style.color = '#dc3545';
+        console.error('Fetch error:', error);
+    }
+}
+</script>
+{% endblock %}

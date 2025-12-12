@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Review Emails - Email Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="progress-steps">
+        <div class="step completed">1. Upload CSV</div>
+        <div class="step completed">2. Configure</div>
+        <div class="step completed">3. Validate</div>
+        <div class="step active">3.5 Review</div>
+        <div class="step">4. Compose</div>
+        <div class="step">5. Send</div>
+    </div>
+
+    <h2>Review Email Results</h2>
+    <p class="subtitle">You have <strong>{{ valid_count }}</strong> valid emails ready to send and <strong>{{ problematic_count }}</strong> problematic emails that need review.</p>
+
+    <div class="stats-grid">
+        <div class="stat-card stat-success">
+            <div class="stat-value">{{ valid_count }}</div>
+            <div class="stat-label">✓ Valid Emails</div>
+            <p style="font-size: 0.85rem; margin-top: 0.5rem; color: #666;">Auto-approved for sending</p>
+        </div>
+        <div class="stat-card stat-danger">
+            <div class="stat-value">{{ problematic_count }}</div>
+            <div class="stat-label">⚠ Problematic Emails</div>
+            <p style="font-size: 0.85rem; margin-top: 0.5rem; color: #666;">Review below</p>
+        </div>
+    </div>
+
+    {% if problematic_emails %}
+    <div class="review-section">
+        <h3>⚠️ Problematic Emails (Click to Include)</h3>
+        <p class="help-text">Check the emails you'd like to include despite the warnings. Unchecked emails will be excluded from the campaign.</p>
+        
+        <div class="email-list">
+            {% for item in problematic_emails %}
+            <div class="email-item" data-idx="{{ item.idx }}">
+                <div class="email-checkbox">
+                    <input type="checkbox" id="email-{{ item.idx }}" class="email-select" value="{{ item.idx }}">
+                    <label for="email-{{ item.idx }}" class="email-address">{{ item.email }}</label>
+                </div>
+                <div class="email-details">
+                    <p class="reasons"><strong>Issues:</strong> {{ item.reasons }}</p>
+                    {% if item.catch_all == 'yes' %}
+                    <p class="suggestion" style="color: #e67e22;"><strong>⚠ Catch-All Domain:</strong> This domain accepts all emails, so the mailbox might not exist.</p>
+                    {% endif %}
+                    {% if item.suggestion %}
+                    <p class="suggestion"><strong>Suggestion:</strong> <code>{{ item.suggestion }}</code></p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="bulk-actions">
+            <button class="btn-secondary" onclick="selectAll()">Select All</button>
+            <button class="btn-secondary" onclick="deselectAll()">Deselect All</button>
+        </div>
+    </div>
+    {% endif %}
+
+    <div id="selectionStatus" class="info-box" style="display: none;">
+        <p><strong>Selected:</strong> <span id="selectedCount">0</span> problematic emails will be included in the campaign.</p>
+    </div>
+
+    <div class="button-group">
+        <a href="{{ url_for('validate_emails') }}" class="btn-secondary">← Back to Validation</a>
+        <button class="btn-primary" onclick="saveSelection()">Continue to Compose →</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const checkboxes = document.querySelectorAll('.email-select');
+const problematicCount = Number('{{ problematic_count or 0 }}');
+
+// Update selection count on change
+checkboxes.forEach(cb => {
+    cb.addEventListener('change', updateSelectionStatus);
+});
+
+function updateSelectionStatus() {
+    const selected = Array.from(checkboxes).filter(cb => cb.checked).length;
+    const status = document.getElementById('selectionStatus');
+    const count = document.getElementById('selectedCount');
+    
+    if (selected > 0 || problematicCount > 0) {
+        status.style.display = 'block';
+        count.textContent = selected;
+    }
+}
+
+function selectAll() {
+    checkboxes.forEach(cb => cb.checked = true);
+    updateSelectionStatus();
+}
+
+function deselectAll() {
+    checkboxes.forEach(cb => cb.checked = false);
+    updateSelectionStatus();
+}
+
+async function saveSelection() {
+    const selected = Array.from(checkboxes)
+        .filter(cb => cb.checked)
+        .map(cb => parseInt(cb.value));
+    
+    try {
+        const response = await fetch('{{ url_for("set_email_selection") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approved_indices: selected })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            window.location.href = '{{ url_for("compose_email") }}';
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        alert('Error saving selection: ' + error.message);
+    }
+}
+
+// Initialize status on page load
+updateSelectionStatus();
+</script>
+{% endblock %}

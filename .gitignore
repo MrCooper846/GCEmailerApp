@@ -1,0 +1,44 @@
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment variables
+.env
+.env.local
+.env.*
+tokens.json
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Uploads folder
+uploads/
+*.csv
+
+# SQLite cache
+*.sqlite
+*.db
+.coverage
+htmlcov/
+coverage.xml
+.pytest_cache/
+.ipynb_checkpoints/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Flask
+instance/
+.pytest_cache/

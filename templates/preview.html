@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Preview Email - Email Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="progress-steps">
+        <div class="step completed">1. Upload CSV</div>
+        <div class="step completed">2. Configure</div>
+        <div class="step completed">3. Validate</div>
+        <div class="step active">4. Compose</div>
+        <div class="step">5. Send</div>
+    </div>
+
+    <h2>Preview Your Email</h2>
+    <p class="subtitle">Review your email before sending to <strong>{{ valid_count }}</strong> recipients.</p>
+
+    <div class="preview-container">
+        <div class="preview-tabs">
+            <button class="tab-button active" onclick="showTab('html')">HTML Preview</button>
+            <button class="tab-button" onclick="showTab('text')">Text Preview</button>
+        </div>
+
+        <div id="htmlTab" class="preview-tab active">
+            <div class="email-preview">
+                <div class="email-header">
+                    <p><strong>Subject:</strong> {{ subject }}</p>
+                    <p><strong>From:</strong> {{ config.SMTP_USER or 'your-email@example.com' }}</p>
+                    <p><strong>To:</strong> recipient@example.com (Sample)</p>
+                </div>
+                <div class="email-body">
+                    {{ html_preview|safe }}
+                </div>
+            </div>
+        </div>
+
+        <div id="textTab" class="preview-tab">
+            <div class="email-preview text-preview">
+                <div class="email-header">
+                    <p><strong>Subject:</strong> {{ subject }}</p>
+                    <p><strong>From:</strong> {{ config.SMTP_USER or 'your-email@example.com' }}</p>
+                    <p><strong>To:</strong> recipient@example.com (Sample)</p>
+                </div>
+                <div class="email-body">
+                    <pre>{{ text_preview }}</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="alert alert-info">
+        <strong>📝 Note:</strong> This preview shows sample data. Actual emails will be personalized with real recipient names.
+    </div>
+
+    <form action="{{ url_for('send_emails') }}" method="POST" onsubmit="return confirmSend()">
+        <div class="button-group">
+            <a href="{{ url_for('compose_email') }}" class="btn-secondary">← Edit Email</a>
+            <button type="submit" class="btn-primary btn-large">Send Campaign →</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showTab(tabName) {
+    // Hide all tabs
+    document.querySelectorAll('.preview-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Show selected tab
+    document.getElementById(tabName + 'Tab').classList.add('active');
+    event.target.classList.add('active');
+}
+
+function confirmSend() {
+    return confirm('Are you sure you want to send this email to {{ valid_count }} recipients? This action cannot be undone.');
+}
+</script>
+{% endblock %}

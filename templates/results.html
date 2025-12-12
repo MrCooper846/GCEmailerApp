@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Campaign Results - Email Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="progress-steps">
+        <div class="step completed">1. Upload CSV</div>
+        <div class="step completed">2. Configure</div>
+        <div class="step completed">3. Validate</div>
+        <div class="step completed">4. Compose</div>
+        <div class="step completed">5. Send</div>
+    </div>
+
+    <h2>✅ Campaign Complete!</h2>
+    <p class="subtitle">Your email campaign has been processed. Here are the results:</p>
+
+    <div class="stats-grid">
+        <div class="stat-card stat-success">
+            <div class="stat-value">{{ results.sent }}</div>
+            <div class="stat-label">✓ Sent Successfully</div>
+        </div>
+        <div class="stat-card stat-danger">
+            <div class="stat-value">{{ results.failed }}</div>
+            <div class="stat-label">✗ Failed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ results.sent + results.failed }}</div>
+            <div class="stat-label">Total Processed</div>
+        </div>
+    </div>
+
+    {% if results.errors %}
+    <div class="errors-section">
+        <h3>⚠️ Errors ({{ results.errors|length }})</h3>
+        <div class="error-list">
+            {% for error in results.errors[:10] %}
+                <div class="error-item">{{ error }}</div>
+            {% endfor %}
+            {% if results.errors|length > 10 %}
+                <div class="error-item"><em>... and {{ results.errors|length - 10 }} more errors</em></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="button-group">
+        <a href="{{ url_for('reset') }}" class="btn-secondary">Start New Campaign</a>
+        <a href="{{ url_for('index') }}" class="btn-primary">Return to Home</a>
+    </div>
+
+    <div class="info-box">
+        <h3>📊 What's Next?</h3>
+        <ul>
+            <li>Monitor your email analytics and open rates</li>
+            <li>Follow up with engaged recipients</li>
+            <li>Clean your list by removing bounced emails</li>
+            <li>Consider A/B testing different subject lines next time</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
