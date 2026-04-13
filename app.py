@@ -7,13 +7,12 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
-from flask_session import Session
 from werkzeug.utils import secure_filename
 import pandas as pd
 from dotenv import load_dotenv
 
 from email_validator_service import validate_email_list
-from email_sender_service import send_email_campaign, render_placeholders
+from email_sender_service import send_email_campaign
 from google_oauth_service import (
     generate_auth_url,
     exchange_code,
@@ -23,7 +22,6 @@ from google_oauth_service import (
     get_profile_email,
 )
 from gmail_sender_service import send_email_campaign_gmail
-from openai_personalization_service import personalize_email
 
 # Load environment variables
 load_dotenv()
@@ -33,26 +31,6 @@ app.secret_key = os.getenv("SECRET_KEY", os.urandom(24))
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['ALLOWED_EXTENSIONS'] = {'csv'}
-
-# Server-side session configuration (filesystem by default; optional Redis)
-session_type = os.getenv('SESSION_TYPE', 'filesystem')
-app.config['SESSION_TYPE'] = session_type
-app.config['SESSION_COOKIE_NAME'] = os.getenv('SESSION_COOKIE_NAME', 'gc_session')
-app.config['SESSION_PERMANENT'] = False
-
-if session_type == 'filesystem':
-    session_dir = os.getenv('SESSION_FILE_DIR', os.path.join('cache', 'sessions'))
-    app.config['SESSION_FILE_DIR'] = session_dir
-    app.config['SESSION_FILE_THRESHOLD'] = int(os.getenv('SESSION_FILE_THRESHOLD', '500'))
-    os.makedirs(session_dir, exist_ok=True)
-elif session_type == 'redis':
-    # Optional Redis-backed sessions if desired
-    import redis
-    redis_url = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
-    app.config['SESSION_REDIS'] = redis.from_url(redis_url)
-
-# Initialize server-side sessions
-Session(app)
 
 # SMTP Configuration from .env
 SMTP_USER = os.getenv("SMTP_USER")
@@ -83,76 +61,6 @@ def guess_name_column(df: pd.DataFrame) -> str:
         if candidates:
             return candidates[0]
     return None
-
-
-def guess_title_column(df: pd.DataFrame) -> str:
-    """Auto-detect title/job role column"""
-    import re
-    for pattern in [r'job.*title', r'^title$', r'role', r'position', r'job']:
-        candidates = [c for c in df.columns if re.search(pattern, c.strip().lower())]
-        if candidates:
-            return candidates[0]
-    return None
-
-
-def guess_company_column(df: pd.DataFrame) -> str:
-    """Auto-detect company column"""
-    import re
-    for pattern in [r'company', r'organisation', r'organization', r'employer', r'business']:
-        candidates = [c for c in df.columns if re.search(pattern, c.strip().lower())]
-        if candidates:
-            return candidates[0]
-    return None
-
-
-def _safe_cell(value, fallback=''):
-    """Normalize values pulled from pandas rows"""
-    if pd.isna(value):
-        return fallback
-    text = str(value).strip()
-    if text.lower() == 'nan':
-        return fallback
-    return text or fallback
-
-
-def build_preview_context(df: pd.DataFrame,
-                          subject: str,
-                          html_content: str,
-                          text_content: str,
-                          email_col: str,
-                          name_col: str = None):
-    """Build preview data from either AI drafts or the base template."""
-    sample_name = 'John'
-    sample_email = 'recipient@example.com'
-    preview_subject = subject
-
-    if not df.empty:
-        first_row = df.iloc[0]
-        if name_col and name_col in df.columns:
-            sample_name = _safe_cell(first_row.get(name_col), sample_name)
-        sample_email = _safe_cell(first_row.get(email_col), sample_email)
-
-    preview_html = render_placeholders(html_content, sample_name)
-    preview_text = render_placeholders(text_content, sample_name)
-
-    if not df.empty:
-        first_row = df.iloc[0]
-        preview_subject = _safe_cell(first_row.get('ai_subject'), preview_subject)
-        preview_html = _safe_cell(first_row.get('ai_html_content'), preview_html)
-        preview_text = _safe_cell(first_row.get('ai_text_content'), preview_text)
-
-    personalized_count = 0
-    if 'ai_subject' in df.columns:
-        personalized_count = int(df['ai_subject'].fillna('').astype(str).str.strip().ne('').sum())
-
-    return {
-        'subject': preview_subject,
-        'html_preview': preview_html,
-        'text_preview': preview_text,
-        'sample_name': sample_name,
-        'sample_email': sample_email,
-        'personalized_count': personalized_count,
-    }
 
 
 @app.route('/')
@@ -188,20 +96,17 @@ def upload_csv():
         
         # Load and inspect CSV
         df = pd.read_csv(filepath)
-        
+        df.columns = df.columns.str.strip()  # remove leading/trailing whitespace and newlines
+
         # Auto-detect columns
         email_col = guess_email_column(df)
         name_col = guess_name_column(df)
-        title_col = guess_title_column(df)
-        company_col = guess_company_column(df)
         
         # Store in session
         session['csv_file'] = unique_filename
         session['total_rows'] = len(df)
         session['email_col'] = email_col
         session['name_col'] = name_col
-        session['title_col'] = title_col
-        session['company_col'] = company_col
         session['columns'] = df.columns.tolist()
         
         flash(f'Successfully uploaded {len(df)} contacts', 'success')
@@ -223,8 +128,6 @@ def configure_columns():
                          columns=session.get('columns', []),
                          email_col=session.get('email_col'),
                          name_col=session.get('name_col'),
-                         title_col=session.get('title_col'),
-                         company_col=session.get('company_col'),
                          total_rows=session.get('total_rows'))
 
 
@@ -233,8 +136,6 @@ def set_columns():
     """Save column configuration and start validation"""
     session['email_col'] = request.form.get('email_col')
     session['name_col'] = request.form.get('name_col')
-    session['title_col'] = request.form.get('title_col')
-    session['company_col'] = request.form.get('company_col')
     
     if not session.get('email_col'):
         flash('Email column is required', 'error')
@@ -261,6 +162,7 @@ def api_validate():
         app.logger.info('Starting email validation...')
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], session['csv_file'])
         df = pd.read_csv(filepath)
+        df.columns = df.columns.str.strip()  # remove leading/trailing whitespace and newlines
         email_col = session['email_col']
         
         app.logger.info(f'Loaded {len(df)} rows from CSV')
@@ -376,8 +278,6 @@ def set_email_selection():
         # Store final selected list in session
         session['final_df_json'] = final_df.to_json(orient='records')
         session['valid_count'] = len(final_df)
-        session.pop('personalized_df_json', None)
-        session.pop('use_ai_personalization', None)
         
         return jsonify({
             'success': True,
@@ -434,11 +334,7 @@ def compose_email():
     
     return render_template('compose.html',
                          valid_count=session.get('valid_count'),
-                         name_col=session.get('name_col'),
-                         title_col=session.get('title_col'),
-                         company_col=session.get('company_col'),
-                         use_ai_personalization=session.get('use_ai_personalization', False),
-                         openai_configured=bool(os.getenv('OPENAI_API_KEY')))
+                         name_col=session.get('name_col'))
 
 
 @app.route('/preview', methods=['POST'])
@@ -452,64 +348,15 @@ def preview_email():
     session['subject'] = subject
     session['html_content'] = html_content
     session['text_content'] = text_content
-    session['use_ai_personalization'] = request.form.get('use_ai_personalization') == 'on'
-
-    df = pd.read_json(session['final_df_json'], orient='records')
-    email_col = session['email_col']
-    name_col = session.get('name_col')
-    title_col = session.get('title_col')
-    company_col = session.get('company_col')
-
-    if session['use_ai_personalization']:
-        generated_count = 0
-        for idx, row in df.iterrows():
-            try:
-                personalized = personalize_email(
-                    recipient_email=_safe_cell(row.get(email_col)),
-                    recipient_name=_safe_cell(row.get(name_col)) if name_col and name_col in df.columns else '',
-                    recipient_title=_safe_cell(row.get(title_col)) if title_col and title_col in df.columns else '',
-                    recipient_company=_safe_cell(row.get(company_col)) if company_col and company_col in df.columns else '',
-                    base_subject=subject,
-                    base_html=html_content,
-                    base_text=text_content,
-                )
-                df.at[idx, 'ai_subject'] = personalized['subject']
-                df.at[idx, 'ai_html_content'] = personalized['html_body']
-                df.at[idx, 'ai_text_content'] = personalized['text_body']
-                generated_count += 1
-            except Exception as e:
-                app.logger.warning(f'AI personalization failed for row {idx}: {e}')
-                df.at[idx, 'ai_subject'] = subject
-                df.at[idx, 'ai_html_content'] = html_content
-                df.at[idx, 'ai_text_content'] = text_content
-
-        session['personalized_df_json'] = df.to_json(orient='records')
-        if generated_count:
-            flash(f'Generated {generated_count} AI-personalized drafts.', 'success')
-        else:
-            flash('AI personalization fell back to the base template for every recipient.', 'warning')
-        preview_source = df
-    else:
-        session.pop('personalized_df_json', None)
-        preview_source = df
-
-    preview = build_preview_context(
-        preview_source,
-        subject,
-        html_content,
-        text_content,
-        email_col,
-        name_col
-    )
-
+    
+    # Generate preview with sample name
+    preview_html = html_content.replace('{{FirstName}}', 'John').replace('{{Name}}', 'John')
+    preview_text = text_content.replace('{{FirstName}}', 'John').replace('{{Name}}', 'John')
+    
     return render_template('preview.html',
-                         subject=preview['subject'],
-                         html_preview=preview['html_preview'],
-                         text_preview=preview['text_preview'],
-                         sample_name=preview['sample_name'],
-                         sample_email=preview['sample_email'],
-                         personalized_count=preview['personalized_count'],
-                         use_ai_personalization=session.get('use_ai_personalization', False),
+                         subject=subject,
+                         html_preview=preview_html,
+                         text_preview=preview_text,
                          valid_count=session.get('valid_count'))
 
 
@@ -531,10 +378,7 @@ def send_emails():
         save_credentials(google_email, creds)  # persist refreshed token
 
         # Load final email list from session
-        df = pd.read_json(
-            session.get('personalized_df_json', session['final_df_json']),
-            orient='records'
-        )
+        df = pd.read_json(session['final_df_json'], orient='records')
         
         email_col = session['email_col']
         name_col = session.get('name_col')

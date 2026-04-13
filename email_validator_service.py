@@ -668,6 +668,7 @@ async def validate_email_list(df: pd.DataFrame, email_col: str,
     # Create DataFrame preserving original index order
     verdict_df = pd.DataFrame.from_dict(final_results, orient="index")
     verdict_df = verdict_df.reindex(df.index)  # Ensure same order as original df
+    verdict_df = verdict_df.drop(columns=['email'], errors='ignore')  # avoid duplicate with original df
     out = pd.concat([df, verdict_df], axis=1)
     
     if progress_callback:
