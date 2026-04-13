@@ -15,18 +15,24 @@
     <h2>Preview Your Email</h2>
     <p class="subtitle">Review your email before sending to <strong>{{ valid_count }}</strong> recipients.</p>
 
+    {% if use_ai_personalization %}
+    <div class="alert alert-info">
+        Showing the first AI-personalized draft. Generated drafts: <strong>{{ personalized_count }}</strong>.
+    </div>
+    {% endif %}
+
     <div class="preview-container">
         <div class="preview-tabs">
-            <button class="tab-button active" onclick="showTab('html')">HTML Preview</button>
-            <button class="tab-button" onclick="showTab('text')">Text Preview</button>
+            <button class="tab-button active" onclick="showTab(event, 'html')">HTML Preview</button>
+            <button class="tab-button" onclick="showTab(event, 'text')">Text Preview</button>
         </div>
 
         <div id="htmlTab" class="preview-tab active">
             <div class="email-preview">
                 <div class="email-header">
                     <p><strong>Subject:</strong> {{ subject }}</p>
-                    <p><strong>From:</strong> {{ config.SMTP_USER or 'your-email@example.com' }}</p>
-                    <p><strong>To:</strong> recipient@example.com (Sample)</p>
+                    <p><strong>From:</strong> {{ session.get('google_email') or 'your-email@example.com' }}</p>
+                    <p><strong>To:</strong> {{ sample_email }}{% if sample_name %} ({{ sample_name }}){% endif %}</p>
                 </div>
                 <div class="email-body">
                     {{ html_preview|safe }}
@@ -38,8 +44,8 @@
             <div class="email-preview text-preview">
                 <div class="email-header">
                     <p><strong>Subject:</strong> {{ subject }}</p>
-                    <p><strong>From:</strong> {{ config.SMTP_USER or 'your-email@example.com' }}</p>
-                    <p><strong>To:</strong> recipient@example.com (Sample)</p>
+                    <p><strong>From:</strong> {{ session.get('google_email') or 'your-email@example.com' }}</p>
+                    <p><strong>To:</strong> {{ sample_email }}{% if sample_name %} ({{ sample_name }}){% endif %}</p>
                 </div>
                 <div class="email-body">
                     <pre>{{ text_preview }}</pre>
@@ -49,13 +55,18 @@
     </div>
 
     <div class="alert alert-info">
-        <strong>📝 Note:</strong> This preview shows sample data. Actual emails will be personalized with real recipient names.
+        <strong>Note:</strong>
+        {% if use_ai_personalization %}
+        This preview shows one saved AI-generated recipient draft. The send step will use the per-recipient drafts stored in session.
+        {% else %}
+        This preview shows sample data. Actual emails will be personalized with real recipient names.
+        {% endif %}
     </div>
 
     <form action="{{ url_for('send_emails') }}" method="POST" onsubmit="return confirmSend()">
         <div class="button-group">
-            <a href="{{ url_for('compose_email') }}" class="btn-secondary">← Edit Email</a>
-            <button type="submit" class="btn-primary btn-large">Send Campaign →</button>
+            <a href="{{ url_for('compose_email') }}" class="btn-secondary">Edit Email</a>
+            <button type="submit" class="btn-primary btn-large">Send Campaign</button>
         </div>
     </form>
 </div>
@@ -63,16 +74,14 @@
 
 {% block scripts %}
 <script>
-function showTab(tabName) {
-    // Hide all tabs
+function showTab(event, tabName) {
     document.querySelectorAll('.preview-tab').forEach(tab => {
         tab.classList.remove('active');
     });
     document.querySelectorAll('.tab-button').forEach(btn => {
         btn.classList.remove('active');
     });
-    
-    // Show selected tab
+
     document.getElementById(tabName + 'Tab').classList.add('active');
     event.target.classList.add('active');
 }

@@ -5,6 +5,7 @@ import os
 import ssl
 import logging
 import smtplib
+import re
 from time import sleep
 from smtplib import SMTPResponseException
 from email.message import EmailMessage
@@ -12,17 +13,32 @@ import pandas as pd
 from typing import List, Optional
 
 
+def render_placeholders(content: str, first_name: str) -> str:
+    """
+    Replace supported personalization tokens with recipient values.
+    """
+    name = first_name.strip() or "Sir/Madam"
+    replacements = {
+        "firstname": name,
+        "name": name,
+    }
+
+    def replace(match):
+        key = match.group(1).strip().lower()
+        return replacements.get(key, match.group(0))
+
+    return re.sub(r"\{\{\s*([A-Za-z]+)\s*\}\}", replace, content)
+
+
 def build_message(to_addr: str, first_name: str, subject: str, 
                   html_content: str, text_content: str, email_from: str) -> EmailMessage:
     """
     Build an EmailMessage with personalization
     """
-    name = first_name.strip() or "Sir/Madam"
-    
     # Personalize subject, HTML and text
-    subject_personalized = subject.replace("{{FirstName}}", name).replace("{{Name}}", name)
-    html = html_content.replace("{{FirstName}}", name).replace("{{Name}}", name)
-    text = text_content.replace("{{FirstName}}", name).replace("{{Name}}", name)
+    subject_personalized = render_placeholders(subject, first_name)
+    html = render_placeholders(html_content, first_name)
+    text = render_placeholders(text_content, first_name)
 
     # Create email
     msg = EmailMessage()
