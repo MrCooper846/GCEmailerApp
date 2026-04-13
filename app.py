@@ -96,7 +96,8 @@ def upload_csv():
         
         # Load and inspect CSV
         df = pd.read_csv(filepath)
-        
+        df.columns = df.columns.str.strip()  # remove leading/trailing whitespace and newlines
+
         # Auto-detect columns
         email_col = guess_email_column(df)
         name_col = guess_name_column(df)
@@ -161,6 +162,7 @@ def api_validate():
         app.logger.info('Starting email validation...')
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], session['csv_file'])
         df = pd.read_csv(filepath)
+        df.columns = df.columns.str.strip()  # remove leading/trailing whitespace and newlines
         email_col = session['email_col']
         
         app.logger.info(f'Loaded {len(df)} rows from CSV')
@@ -434,4 +436,4 @@ def format_datetime(value):
 if __name__ == '__main__':
     import logging
     logging.basicConfig(level=logging.INFO)
-    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
+    app.run(debug=True, host='0.0.0.0', port=5001, threaded=True)
