@@ -45,8 +45,11 @@ def send_email_campaign_gmail(
         first_name = ""
         if name_col and name_col in df.columns:
             first_name = str(row[name_col]).strip()
+        row_subject = str(row.get("ai_subject", "")).strip() or subject
+        row_html = str(row.get("ai_html_content", "")).strip() or html_content
+        row_text = str(row.get("ai_text_content", "")).strip() or text_content
         try:
-            msg = build_message(email, first_name, subject, html_content, text_content, email_from="me")
+            msg = build_message(email, first_name, row_subject, row_html, row_text, email_from="me")
             messages.append(msg)
         except Exception as e:
             results["failed"] += 1

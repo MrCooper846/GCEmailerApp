@@ -13,7 +13,7 @@
     </div>
 
     <h2>Configure Your Columns</h2>
-    <p class="subtitle">Select which columns contain email addresses and names. We've auto-detected the most likely columns for you.</p>
+    <p class="subtitle">Select which columns contain email addresses, names, and any optional fields you want to use for AI personalization.</p>
 
     <div class="stats-grid">
         <div class="stat-card">
@@ -46,6 +46,28 @@
                 {% endfor %}
             </select>
             <p class="help-text">If selected, you can use {{'{{'}}FirstName{{'}}'}} or {{'{{'}}Name{{'}}'}} in your email content</p>
+        </div>
+
+        <div class="form-group">
+            <label for="title_col">Title Column (Optional)</label>
+            <select name="title_col" id="title_col">
+                <option value="">-- No Title Column --</option>
+                {% for col in columns %}
+                    <option value="{{ col }}" {% if col == title_col %}selected{% endif %}>{{ col }}</option>
+                {% endfor %}
+            </select>
+            <p class="help-text">Used for per-recipient AI personalization.</p>
+        </div>
+
+        <div class="form-group">
+            <label for="company_col">Company Column (Optional)</label>
+            <select name="company_col" id="company_col">
+                <option value="">-- No Company Column --</option>
+                {% for col in columns %}
+                    <option value="{{ col }}" {% if col == company_col %}selected{% endif %}>{{ col }}</option>
+                {% endfor %}
+            </select>
+            <p class="help-text">Used for per-recipient AI personalization.</p>
         </div>
 
         <div class="button-group">

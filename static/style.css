@@ -228,6 +228,25 @@ h2 {
     font-size: 0.85rem;
 }
 
+.checkbox-group {
+    background: var(--light-bg);
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: auto;
+}
+
 /* Buttons */
 .btn-primary, .btn-secondary {
     display: inline-block;

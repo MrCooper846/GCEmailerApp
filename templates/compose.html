@@ -15,6 +15,12 @@
     <h2>Compose Your Email</h2>
     <p class="subtitle">Create your email message. You'll send to <strong>{{ valid_count }}</strong> validated recipients.</p>
 
+    {% if not openai_configured %}
+    <div class="alert alert-info">
+        AI personalization is available once <code>OPENAI_API_KEY</code> is set in your <code>.env</code>.
+    </div>
+    {% endif %}
+
     {% if session.get('google_email') %}
     <div class="alert alert-success">
         Sending as {{ session.get('google_email') }}
@@ -30,38 +36,54 @@
     <form action="{{ url_for('preview_email') }}" method="POST" class="compose-form">
         <div class="form-group">
             <label for="subject">Email Subject *</label>
-            <input type="text" name="subject" id="subject" required 
-                   placeholder="e.g., Upcoming events across MENA — 2025-12-11"
+            <input type="text" name="subject" id="subject" required
+                   placeholder="e.g., Upcoming events across MENA - 2025-12-11"
                    value="{{ session.get('subject', '') }}">
         </div>
 
         <div class="form-group">
             <label for="html_content">HTML Email Content *</label>
             {% if name_col %}
-            <p class="help-text">💡 Use <code>{{'{{'}}FirstName{{'}}'}}</code> or <code>{{'{{'}}Name{{'}}'}}</code> for personalization</p>
+            <p class="help-text">Use <code>{{'{{'}}FirstName{{'}}'}}</code> or <code>{{'{{'}}Name{{'}}'}}</code> for personalization</p>
             {% endif %}
-            <textarea name="html_content" id="html_content" rows="15" required 
+            <textarea name="html_content" id="html_content" rows="15" required
                       placeholder="Enter your HTML email content here...">{{ session.get('html_content', '') or default_html }}</textarea>
         </div>
 
         <div class="form-group">
             <label for="text_content">Plain Text Version *</label>
             <p class="help-text">Fallback for email clients that don't support HTML</p>
-            <textarea name="text_content" id="text_content" rows="10" required 
+            <textarea name="text_content" id="text_content" rows="10" required
                       placeholder="Enter plain text version here...">{{ session.get('text_content', '') or default_text }}</textarea>
         </div>
 
+        <div class="form-group checkbox-group">
+            <label class="checkbox-label" for="use_ai_personalization">
+                <input type="checkbox"
+                       name="use_ai_personalization"
+                       id="use_ai_personalization"
+                       {% if use_ai_personalization %}checked{% endif %}
+                       {% if not openai_configured %}disabled{% endif %}>
+                Generate a tailored draft for each recipient using OpenAI
+            </label>
+            <p class="help-text">Uses the mapped name, title, and company columns to generate per-recipient copy.</p>
+            {% if title_col or company_col %}
+            <p class="help-text">Available AI fields: {{ title_col or 'title not mapped' }}, {{ company_col or 'company not mapped' }}</p>
+            {% endif %}
+        </div>
+
         <div class="button-group">
-            <a href="{{ url_for('validate_emails') }}" class="btn-secondary">← Back</a>
-            <button type="submit" class="btn-primary">Preview Email →</button>
+            <a href="{{ url_for('validate_emails') }}" class="btn-secondary">Back</a>
+            <button type="submit" class="btn-primary">Generate Preview</button>
         </div>
     </form>
 
     <div class="info-box">
-        <h3>💡 Tips for Better Emails</h3>
+        <h3>Tips for Better Emails</h3>
         <ul>
             <li>Keep subject lines under 50 characters for better open rates</li>
             <li>Personalize with recipient names using {{'{{'}}FirstName{{'}}'}}</li>
+            <li>Use AI personalization to tailor drafts to title and company details</li>
             <li>Include a clear call-to-action</li>
             <li>Test your HTML in the preview before sending</li>
             <li>Always provide an unsubscribe option</li>
@@ -75,22 +97,22 @@
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
     <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
         <h2>Dear {{FirstName}},</h2>
-        
+
         <p>I hope this email finds you well.</p>
-        
+
         <p>Your email content goes here...</p>
-        
+
         <p>
-            <a href="https://meetings.hubspot.com/ak52" 
-               style="display: inline-block; padding: 12px 24px; background-color: #007bff; 
+            <a href="https://meetings.hubspot.com/ak52"
+               style="display: inline-block; padding: 12px 24px; background-color: #007bff;
                       color: white; text-decoration: none; border-radius: 5px;">
                 Book a Meeting
             </a>
         </p>
-        
+
         <p>Kind regards,<br>
         Your Name</p>
-        
+
         <hr style="margin-top: 30px; border: none; border-top: 1px solid #ddd;">
         <p style="font-size: 12px; color: #666;">
             If you'd like to unsubscribe, <a href="#">click here</a>
