@@ -63,12 +63,21 @@
         {% endif %}
     </div>
 
-    <form action="{{ url_for('send_emails') }}" method="POST" onsubmit="return confirmSend()">
+    <form id="sendForm" action="{{ url_for('send_emails') }}" method="POST">
         <div class="button-group">
-            <a href="{{ url_for('compose_email') }}" class="btn-secondary">Edit Email</a>
-            <button type="submit" class="btn-primary btn-large">Send Campaign</button>
+            <a id="editEmailButton" href="{{ url_for('compose_email') }}" class="btn-secondary">Edit Email</a>
+            <button id="sendButton" type="submit" class="btn-primary btn-large">Send Campaign</button>
         </div>
     </form>
+
+    <div id="sendProgress" class="info-box" style="display: none;" aria-live="polite">
+        <h3>Sending Campaign</h3>
+        <div class="progress-bar">
+            <div id="sendProgressFill" class="progress-fill"></div>
+        </div>
+        <p><strong id="sendProgressPercent">0%</strong> — <span id="sendProgressCount">0 / {{ valid_count }}</span></p>
+        <p id="sendProgressMessage">Preparing campaign...</p>
+    </div>
 </div>
 {% endblock %}
 
@@ -86,8 +95,78 @@ function showTab(event, tabName) {
     event.target.classList.add('active');
 }
 
-function confirmSend() {
-    return confirm('Are you sure you want to send this email to {{ valid_count }} recipients? This action cannot be undone.');
+const sendForm = document.getElementById('sendForm');
+const sendButton = document.getElementById('sendButton');
+const editEmailButton = document.getElementById('editEmailButton');
+const progressPanel = document.getElementById('sendProgress');
+const progressFill = document.getElementById('sendProgressFill');
+const progressPercent = document.getElementById('sendProgressPercent');
+const progressCount = document.getElementById('sendProgressCount');
+const progressMessage = document.getElementById('sendProgressMessage');
+
+sendForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!confirm('Are you sure you want to send this email to {{ valid_count }} recipients? This action cannot be undone.')) {
+        return;
+    }
+
+    sendButton.disabled = true;
+    sendButton.textContent = 'Sending...';
+    editEmailButton.style.pointerEvents = 'none';
+    editEmailButton.style.opacity = '0.5';
+    progressPanel.style.display = 'block';
+
+    try {
+        const response = await fetch(sendForm.action, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Unable to start campaign.');
+        }
+        pollSendProgress(data.job_id);
+    } catch (error) {
+        showSendError(error.message);
+    }
+});
+
+async function pollSendProgress(jobId) {
+    try {
+        const response = await fetch(`/api/send-progress/${jobId}`, { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Unable to read send progress.');
+        }
+
+        const total = Number(data.total) || 0;
+        const current = Number(data.current) || 0;
+        const percent = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
+        progressFill.style.width = `${percent}%`;
+        progressPercent.textContent = `${percent}%`;
+        progressCount.textContent = `${current} / ${total}`;
+        progressMessage.textContent = data.message || 'Sending...';
+
+        if (data.status === 'complete') {
+            window.location.href = `/results?job_id=${encodeURIComponent(jobId)}`;
+            return;
+        }
+        if (data.status === 'failed') {
+            throw new Error(data.error || 'Campaign sending failed.');
+        }
+        window.setTimeout(() => pollSendProgress(jobId), 750);
+    } catch (error) {
+        showSendError(error.message);
+    }
+}
+
+function showSendError(message) {
+    progressMessage.textContent = `Error: ${message}`;
+    progressMessage.style.color = '#c0392b';
+    sendButton.disabled = false;
+    sendButton.textContent = 'Retry Send';
+    editEmailButton.style.pointerEvents = '';
+    editEmailButton.style.opacity = '';
 }
 </script>
 {% endblock %}

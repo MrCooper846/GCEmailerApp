@@ -11,6 +11,7 @@ __pycache__/
 tokens.json
 
 # Virtual environment
+.venv/
 venv/
 env/
 ENV/

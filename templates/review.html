@@ -42,10 +42,15 @@
                     <label for="email-{{ item.idx }}" class="email-address">{{ item.email }}</label>
                 </div>
                 <div class="email-details">
-                    <p class="reasons"><strong>Issues:</strong> {{ item.reasons }}</p>
-                    {% if item.catch_all == 'yes' %}
-                    <p class="suggestion" style="color: #e67e22;"><strong>⚠ Catch-All Domain:</strong> This domain accepts all emails, so the mailbox might not exist.</p>
-                    {% endif %}
+                    <p class="reasons"><strong>Check reached:</strong> {{ item.progress }}</p>
+                    <div class="reasons">
+                        <strong>Why it needs review:</strong>
+                        <ul>
+                            {% for issue in item.issues %}
+                            <li>{{ issue }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
                     {% if item.suggestion %}
                     <p class="suggestion"><strong>Suggestion:</strong> <code>{{ item.suggestion }}</code></p>
                     {% endif %}

@@ -46,11 +46,10 @@ def build_message(to_addr: str, first_name: str, subject: str,
     msg["To"] = to_addr
     msg["Subject"] = subject_personalized
 
-    # HTML as primary content
-    msg.set_content(html, subtype='html')
-    
-    # Plain-text alternative (set as alternative)
-    msg.add_alternative(text, subtype='plain')
+    # multipart/alternative parts are ordered from least to most preferred.
+    # Plain text is the fallback; HTML is the preferred representation.
+    msg.set_content(text, subtype='plain')
+    msg.add_alternative(html, subtype='html')
    
     return msg
 

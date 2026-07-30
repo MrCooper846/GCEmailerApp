@@ -4,12 +4,19 @@ Combines CSV upload, email validation, and personalized email sending
 """
 import os
 import asyncio
+import threading
+import uuid
+from io import StringIO
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from flask_session import Session
 from werkzeug.utils import secure_filename
 import pandas as pd
 from dotenv import load_dotenv
+
+# Load environment variables before importing services that read them at module load time.
+load_dotenv()
 
 from email_validator_service import validate_email_list
 from email_sender_service import send_email_campaign
@@ -23,14 +30,21 @@ from google_oauth_service import (
 )
 from gmail_sender_service import send_email_campaign_gmail
 
-# Load environment variables
-load_dotenv()
+send_jobs = {}
+send_jobs_lock = threading.Lock()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", os.urandom(24))
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_FILE_DIR'] = str(Path(app.instance_path) / 'sessions')
+app.config['SESSION_PERMANENT'] = False
+app.config['SESSION_USE_SIGNER'] = True
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['ALLOWED_EXTENSIONS'] = {'csv'}
+
+Path(app.config['SESSION_FILE_DIR']).mkdir(parents=True, exist_ok=True)
+Session(app)
 
 # SMTP Configuration from .env
 SMTP_USER = os.getenv("SMTP_USER")
@@ -61,6 +75,64 @@ def guess_name_column(df: pd.DataFrame) -> str:
         if candidates:
             return candidates[0]
     return None
+
+
+def build_review_details(row: pd.Series) -> dict:
+    """Turn validator fields into a useful, human-readable review explanation."""
+    raw_reasons = row.get('reasons', '')
+    if pd.isna(raw_reasons):
+        raw_reasons = ''
+    reason_codes = [reason for reason in str(raw_reasons).split(',') if reason]
+
+    reason_labels = {
+        'invalid_syntax': 'The email address has invalid syntax.',
+        'no_mx': 'No working mail server (MX record) was found for the domain.',
+        'disposable_domain': 'The domain appears to provide disposable email addresses.',
+        'likely_typo_domain': 'The domain looks like a possible spelling mistake.',
+        'role_address': 'This is a role-based address rather than a named mailbox.',
+        'catch_all_domain': 'The domain accepts mail for unverified mailbox names.',
+    }
+    issues = [reason_labels.get(reason, reason.replace('_', ' ').capitalize())
+              for reason in reason_codes]
+
+    normalized = row.get('normalized')
+    syntax_ok = normalized is not None and not pd.isna(normalized) and bool(str(normalized).strip())
+    mx_ok = bool(row.get('mx_ok', False))
+    smtp_status = str(row.get('smtp_status', 'not_tested') or 'not_tested').lower()
+    smtp_code = row.get('smtp_code')
+    catch_all = str(row.get('catch_all', 'unknown') or 'unknown').lower()
+
+    if not syntax_ok:
+        progress = 'Syntax check failed; DNS and SMTP checks were not attempted.'
+    elif not mx_ok:
+        progress = 'Syntax passed, but the MX/DNS check failed; SMTP was not attempted.'
+    elif smtp_status == 'not_tested':
+        progress = 'Syntax and MX/DNS checks passed, but the SMTP mailbox check was not completed.'
+    else:
+        progress = f'Syntax and MX/DNS checks passed; SMTP check returned “{smtp_status}”.'
+
+    smtp_labels = {
+        'invalid': 'The recipient server rejected this mailbox during the SMTP check.',
+        'blocked': 'The recipient server blocked the verification attempt; the address may still work.',
+        'tempfail': 'The recipient server reported a temporary failure; the address may still work later.',
+        'error': 'The SMTP mailbox check could not complete; this does not prove the address is invalid.',
+        'unknown': 'The SMTP result was inconclusive; this does not prove the address is invalid.',
+        'not_tested': 'The SMTP mailbox check was not completed.',
+    }
+    if smtp_status in smtp_labels:
+        smtp_issue = smtp_labels[smtp_status]
+        if smtp_status == 'invalid' and smtp_code is not None and not pd.isna(smtp_code):
+            smtp_issue += f' (SMTP {int(smtp_code)})'
+        issues.append(smtp_issue)
+
+    if catch_all == 'yes' and 'catch_all_domain' not in reason_codes:
+        issues.append('The domain is catch-all, so the specific mailbox could not be confirmed.')
+
+    return {
+        'issues': issues or ['The checks were inconclusive; no definite fault was identified.'],
+        'progress': progress,
+        'smtp_status': smtp_status,
+    }
 
 
 @app.route('/')
@@ -225,7 +297,7 @@ def review_emails():
         return redirect(url_for('index'))
     
     # Load validation results from session
-    validated_df = pd.read_json(session['validated_df_json'], orient='records')
+    validated_df = pd.read_json(StringIO(session['validated_df_json']), orient='records')
     
     # Separate valid and problematic
     valid_df = validated_df[validated_df['bounce_risk'] == False]
@@ -235,15 +307,14 @@ def review_emails():
     email_col = session['email_col']
     problematic_emails = []
     for idx, row in problematic_df.iterrows():
-        reasons = row.get('reasons', '')
-        # Handle NaN values from pandas
-        if pd.isna(reasons) or reasons == '':
-            reasons = 'No specific issues detected'
-        
+        review_details = build_review_details(row)
+
         problematic_emails.append({
             'idx': idx,
             'email': row[email_col],
-            'reasons': str(reasons),
+            'issues': review_details['issues'],
+            'progress': review_details['progress'],
+            'smtp_status': review_details['smtp_status'],
             'suggestion': row.get('suggestion') if not pd.isna(row.get('suggestion')) else None,
             'catch_all': row.get('catch_all', 'unknown'),
         })
@@ -263,7 +334,7 @@ def set_email_selection():
         approved_indices = data.get('approved_indices', [])
         
         # Load validation results from session
-        validated_df = pd.read_json(session['validated_df_json'], orient='records')
+        validated_df = pd.read_json(StringIO(session['validated_df_json']), orient='records')
         
         # Start with valid emails
         valid_df = validated_df[validated_df['bounce_risk'] == False].copy()
@@ -362,15 +433,22 @@ def preview_email():
 
 @app.route('/send', methods=['POST'])
 def send_emails():
-    """Send email campaign via Gmail API (Google OAuth)"""
+    """Start a Gmail campaign in the background and return its job ID."""
+    is_async_request = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     google_email = session.get('google_email')
     if not google_email:
-        flash('Please sign in with Google to send emails.', 'error')
+        message = 'Please sign in with Google to send emails.'
+        if is_async_request:
+            return jsonify({'success': False, 'error': message}), 401
+        flash(message, 'error')
         return redirect(url_for('compose_email'))
 
     creds = load_credentials(google_email)
     if not creds:
-        flash('Google session expired. Please sign in again.', 'error')
+        message = 'Google session expired. Please sign in again.'
+        if is_async_request:
+            return jsonify({'success': False, 'error': message}), 401
+        flash(message, 'error')
         return redirect(url_for('compose_email'))
 
     try:
@@ -378,15 +456,56 @@ def send_emails():
         save_credentials(google_email, creds)  # persist refreshed token
 
         # Load final email list from session
-        df = pd.read_json(session['final_df_json'], orient='records')
+        df = pd.read_json(StringIO(session['final_df_json']), orient='records')
         
         email_col = session['email_col']
         name_col = session.get('name_col')
         subject = session['subject']
         html_content = session['html_content']
         text_content = session['text_content']
-        
-        # Send campaign through Gmail API
+
+        job_id = uuid.uuid4().hex
+        with send_jobs_lock:
+            send_jobs[job_id] = {
+                'status': 'queued',
+                'current': 0,
+                'total': len(df),
+                'message': 'Preparing campaign...',
+                'results': None,
+                'error': None,
+                'sender_email': google_email,
+            }
+        session['send_job_id'] = job_id
+
+        worker = threading.Thread(
+            target=run_send_job,
+            args=(job_id, df, email_col, name_col, subject, html_content,
+                  text_content, creds, google_email),
+            daemon=True,
+        )
+        worker.start()
+
+        return jsonify({'success': True, 'job_id': job_id})
+    except Exception as e:
+        app.logger.error(f'Error starting email campaign: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def run_send_job(job_id, df, email_col, name_col, subject, html_content,
+                 text_content, creds, google_email):
+    """Send a campaign and record progress for the polling endpoint."""
+    def update_progress(current, total, message):
+        with send_jobs_lock:
+            job = send_jobs.get(job_id)
+            if job:
+                job.update({
+                    'status': 'running',
+                    'current': current,
+                    'total': total,
+                    'message': message,
+                })
+
+    try:
         results = send_email_campaign_gmail(
             df=df,
             email_col=email_col,
@@ -395,26 +514,67 @@ def send_emails():
             html_content=html_content,
             text_content=text_content,
             credentials=creds,
+            progress_callback=update_progress,
         )
-        
-        session['send_results'] = results
-        session['sender_email'] = google_email
-        
-        return redirect(url_for('results'))
-        
+        with send_jobs_lock:
+            job = send_jobs.get(job_id)
+            if job:
+                job.update({
+                    'status': 'complete',
+                    'current': job.get('total', len(df)),
+                    'message': 'Campaign complete.',
+                    'results': results,
+                    'sender_email': google_email,
+                })
     except Exception as e:
-        flash(f'Error sending emails: {str(e)}', 'error')
-        return redirect(url_for('compose_email'))
+        app.logger.error(f'Campaign {job_id} failed: {e}', exc_info=True)
+        with send_jobs_lock:
+            job = send_jobs.get(job_id)
+            if job:
+                job.update({
+                    'status': 'failed',
+                    'message': 'Campaign stopped because of an error.',
+                    'error': str(e),
+                })
+
+
+@app.route('/api/send-progress/<job_id>')
+def send_progress(job_id):
+    """Return progress for the current browser session's send job."""
+    if session.get('send_job_id') != job_id:
+        return jsonify({'success': False, 'error': 'Send job not found.'}), 404
+
+    with send_jobs_lock:
+        job = send_jobs.get(job_id)
+        if not job:
+            return jsonify({'success': False, 'error': 'Send job not found.'}), 404
+        payload = {
+            'success': True,
+            'status': job['status'],
+            'current': job['current'],
+            'total': job['total'],
+            'message': job['message'],
+            'error': job['error'],
+        }
+    return jsonify(payload)
 
 
 @app.route('/results')
 def results():
     """Display campaign results"""
-    if 'send_results' not in session:
+    job_id = request.args.get('job_id') or session.get('send_job_id')
+    if not job_id or session.get('send_job_id') != job_id:
         flash('No campaign results available', 'warning')
         return redirect(url_for('index'))
-    
-    return render_template('results.html', results=session['send_results'])
+
+    with send_jobs_lock:
+        job = send_jobs.get(job_id)
+        if not job or job.get('status') != 'complete' or not job.get('results'):
+            flash('Campaign results are not ready yet', 'warning')
+            return redirect(url_for('compose_email'))
+        results_data = dict(job['results'])
+
+    return render_template('results.html', results=results_data)
 
 
 @app.route('/reset')
@@ -436,4 +596,4 @@ def format_datetime(value):
 if __name__ == '__main__':
     import logging
     logging.basicConfig(level=logging.INFO)
-    app.run(debug=True, host='0.0.0.0', port=5001, threaded=True)
+    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)

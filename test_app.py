@@ -173,6 +173,7 @@ class TestEmailSenderService(unittest.TestCase):
         self.assertEqual(msg["From"], "sender@example.com")
         self.assertEqual(msg["Subject"], "Test Subject")
         self.assertIn("Hello John", msg.as_string())
+        self.assertEqual(msg.get_body().get_content_type(), "text/html")
 
     def test_build_message_personalization(self):
         """Test email personalization with placeholders"""

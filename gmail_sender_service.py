@@ -55,25 +55,31 @@ def send_email_campaign_gmail(
             results["failed"] += 1
             results["errors"].append(f"Failed to build message for {email}: {e}")
 
-    total = len(messages)
+    build_failures = results["failed"]
+    total = len(messages) + build_failures
     if progress_callback:
-        progress_callback(0, total, "Connecting to Gmail API...")
+        progress_callback(build_failures, total, "Connecting to Gmail API...")
 
     for idx, msg in enumerate(messages, 1):
+        progress_message = f"Sending to {msg['To']}..."
         try:
             raw = _encode_message(msg)
             service.users().messages().send(userId="me", body={"raw": raw}).execute()
             results["sent"] += 1
-            if progress_callback:
-                progress_callback(results["sent"], total, f"Sent to {msg['To']}")
+            progress_message = f"Sent to {msg['To']}"
         except HttpError as e:
             results["failed"] += 1
             results["errors"].append(f"HTTP {e.resp.status} for {msg['To']}: {e}")
+            progress_message = f"Failed to send to {msg['To']}"
         except Exception as e:
             results["failed"] += 1
             results["errors"].append(f"Error sending to {msg['To']}: {e}")
+            progress_message = f"Failed to send to {msg['To']}"
+        finally:
+            if progress_callback:
+                progress_callback(build_failures + idx, total, progress_message)
 
     if progress_callback:
-        progress_callback(results["sent"], total, "Complete")
+        progress_callback(total, total, "Complete")
 
     return results
