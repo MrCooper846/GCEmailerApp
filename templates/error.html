@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}GC Emailer error{% endblock %}
+{% block content %}<div class="card"><h2>Unable to continue</h2><p>{{ message }}</p><a class="btn-primary" href="{{ url_for('index') }}">Return to campaigns</a></div>{% endblock %}

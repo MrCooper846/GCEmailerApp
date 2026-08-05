@@ -667,3 +667,23 @@ footer {
     padding: 0.5rem 1rem;
     font-size: 0.9rem;
 }
+/* Isolate user-authored email HTML from the application origin. */
+.template-preview {
+    width: 100%;
+    min-height: 620px;
+    border: 1px solid #dfe5e9;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.nav-form { display: inline; margin: 0; }
+.nav-user { font-size: 0.82rem; opacity: 0.85; }
+.auth-card { max-width: 560px; margin: 4rem auto; text-align: center; }
+.workflow-panel { border-top: 1px solid #dfe5e9; padding: 1.25rem 0; }
+.workflow-panel label { display: block; margin-top: .75rem; font-weight: 600; }
+.workflow-panel input, .workflow-panel select, .workflow-panel textarea { width: 100%; margin: .35rem 0 .75rem; }
+.recipient-list { max-height: 420px; overflow: auto; margin: 1rem 0; }
+.recipient-row, .admin-row { display: flex; align-items: center; gap: .75rem; padding: .55rem; border-bottom: 1px solid #e7ecef; }
+.recipient-row input { width: auto; margin: 0; }
+.recipient-row span, .admin-row span { flex: 1; }
+.audit-row { padding: .45rem 0; border-bottom: 1px solid #e7ecef; font-size: .9rem; }

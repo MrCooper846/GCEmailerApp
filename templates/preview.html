@@ -34,9 +34,8 @@
                     <p><strong>From:</strong> {{ session.get('google_email') or 'your-email@example.com' }}</p>
                     <p><strong>To:</strong> {{ sample_email }}{% if sample_name %} ({{ sample_name }}){% endif %}</p>
                 </div>
-                <div class="email-body">
-                    {{ html_preview|safe }}
-                </div>
+                <iframe class="template-preview" sandbox="allow-popups"
+                        title="Sandboxed email preview" srcdoc="{{ html_preview|e }}"></iframe>
             </div>
         </div>
 

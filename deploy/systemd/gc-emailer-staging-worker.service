@@ -1,0 +1,18 @@
+[Unit]
+Description=GC Emailer staging RQ workers
+After=network-online.target postgresql.service redis-server.service
+
+[Service]
+User=gcemailer
+Group=gcemailer
+WorkingDirectory=/opt/gc-emailer/staging/current
+EnvironmentFile=/etc/gc-emailer/staging.env
+ExecStart=/opt/gc-emailer/staging/venv/bin/rq worker --url ${REDIS_URL} campaigns validation maintenance
+Restart=on-failure
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gc-emailer/staging /var/log/gc-emailer
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

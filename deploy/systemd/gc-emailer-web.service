@@ -1,0 +1,20 @@
+[Unit]
+Description=GC Emailer web application
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+User=gcemailer
+Group=gcemailer
+WorkingDirectory=/opt/gc-emailer/current
+EnvironmentFile=/etc/gc-emailer/production.env
+ExecStart=/opt/gc-emailer/venv/bin/gunicorn -c gunicorn.conf.py wsgi:application
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gc-emailer /var/log/gc-emailer
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -23,10 +23,12 @@ TOKEN_STORE = Path(os.getenv("GOOGLE_TOKEN_STORE", "tokens.json"))
 
 
 def _client_config() -> dict:
+    client_id = os.environ["GOOGLE_CLIENT_ID"] if "GOOGLE_CLIENT_ID" in os.environ else CLIENT_ID
+    client_secret = os.environ["GOOGLE_CLIENT_SECRET"] if "GOOGLE_CLIENT_SECRET" in os.environ else CLIENT_SECRET
     return {
         "web": {
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
+            "client_id": client_id,
+            "client_secret": client_secret,
             "redirect_uris": [REDIRECT_URI],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
@@ -34,10 +36,11 @@ def _client_config() -> dict:
     }
 
 
-def create_flow() -> Flow:
-    if not CLIENT_ID or not CLIENT_SECRET:
+def create_flow(state: Optional[str] = None) -> Flow:
+    config = _client_config()["web"]
+    if not config["client_id"] or not config["client_secret"]:
         raise RuntimeError("Google OAuth not configured. Set GOOGLE_CLIENT_ID/SECRET in .env")
-    flow = Flow.from_client_config(_client_config(), scopes=SCOPES)
+    flow = Flow.from_client_config(_client_config(), scopes=SCOPES, state=state)
     flow.redirect_uri = REDIRECT_URI
     return flow
 
@@ -52,9 +55,13 @@ def generate_auth_url() -> Tuple[str, str]:
     return auth_url, state
 
 
-def exchange_code(code: str) -> Credentials:
-    flow = create_flow()
-    flow.fetch_token(code=code)
+def exchange_code(code: str, state: Optional[str] = None,
+                  authorization_response: Optional[str] = None) -> Credentials:
+    flow = create_flow(state=state)
+    if authorization_response:
+        flow.fetch_token(authorization_response=authorization_response)
+    else:
+        flow.fetch_token(code=code)
     return flow.credentials
 
 
@@ -95,3 +102,14 @@ def get_profile_email(creds: Credentials) -> str:
     service = build("oauth2", "v2", credentials=creds, cache_discovery=False)
     user_info = service.userinfo().get().execute()
     return user_info.get("email")
+
+
+def get_profile(creds: Credentials) -> dict:
+    """Return the verified Google identity used for office authorization."""
+    service = build("oauth2", "v2", credentials=creds, cache_discovery=False)
+    user_info = service.userinfo().get().execute()
+    return {
+        "email": str(user_info.get("email") or "").strip().lower(),
+        "verified_email": bool(user_info.get("verified_email")),
+        "name": str(user_info.get("name") or "").strip(),
+    }

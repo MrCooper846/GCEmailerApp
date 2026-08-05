@@ -17,6 +17,18 @@ def _encode_message(msg) -> str:
     return base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
 
+def send_one_gmail_message(credentials, message) -> dict:
+    """Send one built message and return Gmail's immutable acceptance response."""
+    if not credentials:
+        raise ValueError("Missing Google credentials")
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+    service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+    return service.users().messages().send(
+        userId="me", body={"raw": _encode_message(message)}
+    ).execute()
+
+
 def send_email_campaign_gmail(
     df: pd.DataFrame,
     email_col: str,
@@ -25,6 +37,7 @@ def send_email_campaign_gmail(
     html_content: str,
     text_content: str,
     credentials,
+    inline_image_folder: Optional[str] = None,
     progress_callback=None,
 ) -> dict:
     if not credentials:
@@ -44,12 +57,17 @@ def send_email_campaign_gmail(
             continue
         first_name = ""
         if name_col and name_col in df.columns:
-            first_name = str(row[name_col]).strip()
+            name_value = row[name_col]
+            if pd.notna(name_value):
+                first_name = str(name_value).strip()
         row_subject = str(row.get("ai_subject", "")).strip() or subject
         row_html = str(row.get("ai_html_content", "")).strip() or html_content
         row_text = str(row.get("ai_text_content", "")).strip() or text_content
         try:
-            msg = build_message(email, first_name, row_subject, row_html, row_text, email_from="me")
+            msg = build_message(
+                email, first_name, row_subject, row_html, row_text,
+                email_from="me", inline_image_folder=inline_image_folder,
+            )
             messages.append(msg)
         except Exception as e:
             results["failed"] += 1

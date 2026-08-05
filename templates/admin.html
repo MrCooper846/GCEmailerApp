@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Administration · GC Emailer{% endblock %}
+{% block content %}
+<div class="card"><h2>Office access</h2><p class="subtitle">Disable access or assign template-editor and administrator responsibilities.</p><div id="users"></div></div>
+<div class="card"><h2>Global suppression list</h2><form id="suppressionForm"><input id="suppressionEmail" type="email" placeholder="person@example.com" required><input id="suppressionReason" placeholder="Reason" required><button class="btn-primary">Add suppression</button></form><form id="suppressionImport" enctype="multipart/form-data"><input type="file" name="csv_file" accept=".csv" required><button class="btn-secondary">Import CSV</button> <a class="btn-secondary" href="/api/admin/suppressions/export">Export CSV</a></form><div id="suppressions"></div></div>
+<div class="card"><h2>Operations</h2><button id="runRetention" class="btn-secondary">Run retention cleanup</button><div id="jobs"></div></div>
+<div class="card"><h2>Recent audit events</h2><div id="audit"></div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const esc=value=>String(value??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+async function adminApi(url,options={}){const r=await fetch(url,options),d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed.');return d}
+async function loadUsers(){const d=await adminApi('/api/admin/users');users.innerHTML=d.users.map(u=>`<div class="admin-row"><span>${esc(u.email)}</span><select data-role="${esc(u.id)}"><option ${u.role==='user'?'selected':''}>user</option><option ${u.role==='template_editor'?'selected':''}>template_editor</option><option ${u.role==='admin'?'selected':''}>admin</option></select><label><input type="checkbox" data-enabled="${esc(u.id)}" ${u.enabled?'checked':''}> enabled</label><button data-save-user="${esc(u.id)}" class="btn-secondary">Save</button></div>`).join('')}
+users.addEventListener('click',async e=>{const id=e.target.dataset.saveUser;if(!id)return;try{await adminApi(`/api/admin/users/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:document.querySelector(`[data-role="${id}"]`).value,enabled:document.querySelector(`[data-enabled="${id}"]`).checked})});await loadUsers()}catch(x){alert(x.message)}});
+async function loadSuppressions(){const d=await adminApi('/api/admin/suppressions');suppressions.innerHTML=d.suppressions.map(s=>`<div class="admin-row"><span>${esc(s.email)} · ${esc(s.reason)} (${esc(s.source)})</span><button data-delete-suppression="${esc(s.id)}" class="btn-danger">Remove</button></div>`).join('')||'No suppressed addresses.'}
+suppressionForm.addEventListener('submit',async e=>{e.preventDefault();try{await adminApi('/api/admin/suppressions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:suppressionEmail.value,reason:suppressionReason.value})});e.target.reset();await loadSuppressions()}catch(x){alert(x.message)}});
+suppressionImport.addEventListener('submit',async e=>{e.preventDefault();try{const d=await adminApi('/api/admin/suppressions/import',{method:'POST',body:new FormData(e.target)});alert(`Imported ${d.imported} addresses.`);e.target.reset();await loadSuppressions()}catch(x){alert(x.message)}});
+suppressions.addEventListener('click',async e=>{const id=e.target.dataset.deleteSuppression;if(!id||!confirm('Remove this suppression?'))return;try{await adminApi(`/api/admin/suppressions/${id}`,{method:'DELETE'});await loadSuppressions()}catch(x){alert(x.message)}});
+async function loadAudit(){const d=await adminApi('/api/admin/audit');audit.innerHTML=d.events.map(e=>`<div class="audit-row"><time>${esc(e.created_at)}</time> ${esc(e.action)} · ${esc(e.object_type)}</div>`).join('')||'No audit events.'}
+async function loadJobs(){const d=await adminApi('/api/admin/jobs');jobs.innerHTML=d.jobs.map(j=>`<div class="admin-row"><span>${esc(j.sender_email)} · ${esc(j.state)} · ${j.sent}/${j.selected}</span></div>`).join('')||'No queued, sending, or failed campaigns.'}
+runRetention.addEventListener('click',async()=>{try{const d=await adminApi('/api/admin/retention',{method:'POST'});alert(`Cleanup queued as ${d.job_id}.`)}catch(x){alert(x.message)}});
+Promise.all([loadUsers(),loadSuppressions(),loadAudit(),loadJobs()]).catch(e=>alert(e.message));
+</script>
+{% endblock %}

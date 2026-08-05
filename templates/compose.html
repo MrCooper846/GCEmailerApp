@@ -34,6 +34,30 @@
     {% endif %}
 
     <form action="{{ url_for('preview_email') }}" method="POST" class="compose-form">
+        <div class="info-box">
+            <h3>Saved Templates</h3>
+            <div class="form-group">
+                <label for="savedTemplate">Load a template</label>
+                <select id="savedTemplate">
+                    <option value="">Select a saved template...</option>
+                    {% for template in saved_templates %}
+                    <option value="{{ template.id }}">{{ template.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="button-group">
+                <button type="button" id="loadTemplateButton" class="btn-secondary">Load Selected</button>
+            </div>
+            <div class="form-group">
+                <label for="templateName">Save current email as</label>
+                <input type="text" id="templateName" maxlength="100" placeholder="e.g., Conference invitation">
+            </div>
+            <div class="button-group">
+                <button type="button" id="saveTemplateButton" class="btn-secondary">Save Template</button>
+            </div>
+            <p id="templateStatus" class="help-text" aria-live="polite"></p>
+        </div>
+
         <div class="form-group">
             <label for="subject">Email Subject *</label>
             <input type="text" name="subject" id="subject" required
@@ -46,6 +70,15 @@
             {% if name_col %}
             <p class="help-text">Use <code>{{'{{'}}FirstName{{'}}'}}</code> or <code>{{'{{'}}Name{{'}}'}}</code> for personalization</p>
             {% endif %}
+            <div class="info-box">
+                <label for="inlineImage">Embed an image</label>
+                <input type="file" id="inlineImage" accept="image/png,image/jpeg,image/gif">
+                <div class="button-group">
+                    <button type="button" id="uploadImageButton" class="btn-secondary">Upload and Insert Image</button>
+                </div>
+                <p class="help-text">PNG, JPEG, or GIF up to 5 MB. The image will be attached inside the email rather than loaded from the web.</p>
+                <p id="imageStatus" class="help-text" aria-live="polite"></p>
+            </div>
             <textarea name="html_content" id="html_content" rows="15" required
                       placeholder="Enter your HTML email content here...">{{ session.get('html_content', '') or default_html }}</textarea>
         </div>
@@ -121,6 +154,115 @@
 </body>
 </html>
 {% endset %}
+
+{% block scripts %}
+<script>
+const savedTemplate = document.getElementById('savedTemplate');
+const templateName = document.getElementById('templateName');
+const templateStatus = document.getElementById('templateStatus');
+const subjectField = document.getElementById('subject');
+const htmlField = document.getElementById('html_content');
+const textField = document.getElementById('text_content');
+const inlineImage = document.getElementById('inlineImage');
+const imageStatus = document.getElementById('imageStatus');
+
+document.getElementById('loadTemplateButton').addEventListener('click', async () => {
+    if (!savedTemplate.value) {
+        setTemplateStatus('Select a template first.', true);
+        return;
+    }
+    try {
+        const response = await fetch(`/api/templates/${encodeURIComponent(savedTemplate.value)}`, { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Unable to load template.');
+        }
+        subjectField.value = data.template.subject || '';
+        htmlField.value = data.template.html_content || '';
+        textField.value = data.template.text_content || '';
+        templateName.value = data.template.name || '';
+        setTemplateStatus(`Loaded “${data.template.name}”.`);
+    } catch (error) {
+        setTemplateStatus(error.message, true);
+    }
+});
+
+document.getElementById('saveTemplateButton').addEventListener('click', async () => {
+    try {
+        const response = await fetch('{{ url_for("save_email_template") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: templateName.value,
+                subject: subjectField.value,
+                html_content: htmlField.value,
+                text_content: textField.value
+            })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Unable to save template.');
+        }
+
+        let option = Array.from(savedTemplate.options).find(item => item.value === data.template.id);
+        if (!option) {
+            option = new Option(data.template.name, data.template.id);
+            savedTemplate.add(option);
+        } else {
+            option.textContent = data.template.name;
+        }
+        savedTemplate.value = data.template.id;
+        setTemplateStatus(data.message);
+    } catch (error) {
+        setTemplateStatus(error.message, true);
+    }
+});
+
+document.getElementById('uploadImageButton').addEventListener('click', async () => {
+    if (!inlineImage.files.length) {
+        setImageStatus('Choose an image first.', true);
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('image', inlineImage.files[0]);
+    setImageStatus('Uploading...');
+    try {
+        const response = await fetch('{{ url_for("upload_email_asset") }}', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Unable to upload image.');
+        }
+
+        const start = htmlField.selectionStart;
+        const end = htmlField.selectionEnd;
+        const prefix = htmlField.value.slice(0, start);
+        const suffix = htmlField.value.slice(end);
+        const insertion = `\n${data.snippet}\n`;
+        htmlField.value = prefix + insertion + suffix;
+        htmlField.focus();
+        htmlField.setSelectionRange(start + insertion.length, start + insertion.length);
+        inlineImage.value = '';
+        setImageStatus(`${data.message} Image inserted into the HTML.`);
+    } catch (error) {
+        setImageStatus(error.message, true);
+    }
+});
+
+function setTemplateStatus(message, isError = false) {
+    templateStatus.textContent = message;
+    templateStatus.style.color = isError ? '#c0392b' : '#2e7d32';
+}
+
+function setImageStatus(message, isError = false) {
+    imageStatus.textContent = message;
+    imageStatus.style.color = isError ? '#c0392b' : '#2e7d32';
+}
+</script>
+{% endblock %}
 
 {% set default_text %}
 Dear {{FirstName}},
