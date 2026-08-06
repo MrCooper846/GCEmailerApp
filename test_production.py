@@ -3,12 +3,17 @@ import io
 import unittest
 
 from app import app
+from config import ProductionConfig
 from extensions import db
 from models import Campaign, CampaignRecipient, User
 from production_services import sanitize_email_html
 
 
 class ProductionWorkflowTests(unittest.TestCase):
+    def test_production_csrf_time_limit_uses_seconds(self):
+        self.assertIsInstance(ProductionConfig.WTF_CSRF_TIME_LIMIT, int)
+        self.assertEqual(ProductionConfig.WTF_CSRF_TIME_LIMIT, 12 * 60 * 60)
+
     @classmethod
     def setUpClass(cls):
         cls.original_require_auth = app.config["REQUIRE_AUTH"]

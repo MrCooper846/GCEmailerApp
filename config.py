@@ -28,7 +28,10 @@ class BaseConfig:
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = False
-    WTF_CSRF_TIME_LIMIT = timedelta(hours=12)
+    # Flask-WTF passes this value directly to itsdangerous, whose max_age
+    # parameter is expressed in seconds. A timedelta reaches the comparison
+    # unchanged and causes every protected POST to fail with a TypeError.
+    WTF_CSRF_TIME_LIMIT = 12 * 60 * 60
     WTF_CSRF_ENABLED = False
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024
     MAX_CSV_ROWS = int(os.getenv("MAX_CSV_ROWS", "10000"))
