@@ -52,7 +52,9 @@ class BaseConfig:
     EMAIL_TEMPLATE_FOLDER = str(STORAGE_ROOT / "legacy_templates")
     REQUIRE_AUTH = _bool("REQUIRE_AUTH", False)
     RATELIMIT_STORAGE_URI = REDIS_URL
-    RATELIMIT_DEFAULT = "300 per hour"
+    # General browsing budget. Progress polling and sensitive mutations use
+    # separate per-user limits on their individual routes.
+    RATELIMIT_DEFAULT = "600 per hour"
     TRUST_PROXY = _bool("TRUST_PROXY", False)
     STAGING_SEND_ALLOWLIST = {
         value.strip().lower()

@@ -641,7 +641,7 @@ def set_email_selection():
 
 
 @app.route('/login/google')
-@limiter.limit("20 per hour")
+@limiter.limit("30 per hour")
 def login_google():
     try:
         auth_url, state = generate_auth_url()

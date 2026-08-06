@@ -4,9 +4,9 @@ import unittest
 from unittest.mock import patch
 
 from app import app
-from config import ProductionConfig
+from config import BaseConfig, ProductionConfig
 from extensions import db
-from models import Campaign, CampaignRecipient, User
+from models import Campaign, CampaignRecipient, User, ValidationJob
 from production_services import sanitize_email_html
 
 
@@ -14,6 +14,9 @@ class ProductionWorkflowTests(unittest.TestCase):
     def test_production_csrf_time_limit_uses_seconds(self):
         self.assertIsInstance(ProductionConfig.WTF_CSRF_TIME_LIMIT, int)
         self.assertEqual(ProductionConfig.WTF_CSRF_TIME_LIMIT, 12 * 60 * 60)
+
+    def test_office_default_rate_limit_allows_normal_navigation(self):
+        self.assertEqual(BaseConfig.RATELIMIT_DEFAULT, "600 per hour")
 
     @classmethod
     def setUpClass(cls):
@@ -91,6 +94,7 @@ class ProductionWorkflowTests(unittest.TestCase):
         self.assertIn(b"Office campaigns", response.data)
         self.assertIn(b"Send test to me", response.data)
         self.assertIn(b"await persistVisibleContent();status('Sending test email", response.data)
+        self.assertIn(b"button.disabled=true", response.data)
 
     def test_legacy_mutations_are_disabled_when_hosted(self):
         response = self.client.post("/api/validate", json={})
@@ -103,6 +107,22 @@ class ProductionWorkflowTests(unittest.TestCase):
         }, content_type="multipart/form-data")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["campaign"]["total"], 2)
+
+    def test_repeated_validation_reuses_active_job(self):
+        with app.app_context():
+            campaign = Campaign(owner_id=self.owner_id, sender_email="owner@gulfconferences.co.uk",
+                                state="validating", total_count=2)
+            db.session.add(campaign)
+            db.session.flush()
+            job = ValidationJob(campaign_id=campaign.id, owner_id=self.owner_id,
+                                state="running", total=2)
+            db.session.add(job)
+            db.session.commit()
+            campaign_id, job_id = campaign.id, job.id
+        response = self.client.post(f"/api/campaigns/{campaign_id}/validate", json={"policy": "balanced"})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json["job_id"], job_id)
+        self.assertTrue(response.json["existing"])
 
     def test_template_html_removes_executable_content(self):
         cleaned = sanitize_email_html('<p onclick="steal()">Hello</p><script>alert(1)</script>')

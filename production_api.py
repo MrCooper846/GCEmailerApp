@@ -30,6 +30,12 @@ from production_services import (
 production = Blueprint("production", __name__)
 
 
+def _user_rate_key():
+    """Keep one authenticated office user's traffic out of another's budget."""
+    user = current_user()
+    return f"user:{user.id}" if user else f"ip:{request.remote_addr or 'unknown'}"
+
+
 def _queue(name="default"):
     return Queue(name, connection=Redis.from_url(current_app.config["REDIS_URL"]))
 
@@ -117,7 +123,7 @@ def list_campaigns():
 
 @production.post("/api/campaigns")
 @login_required
-@limiter.limit("30 per hour")
+@limiter.limit("60 per hour", key_func=_user_rate_key)
 def create_campaign():
     campaign = Campaign(owner_id=current_user().id, sender_email=current_user().email)
     db.session.add(campaign)
@@ -137,7 +143,7 @@ def get_campaign(campaign_id):
 
 @production.post("/api/campaigns/<campaign_id>/upload")
 @login_required
-@limiter.limit("20 per hour")
+@limiter.limit("60 per hour", key_func=_user_rate_key)
 def upload_campaign_csv(campaign_id):
     campaign = owned_campaign(campaign_id, admin_ok=False)
     if campaign.state not in {"draft", "reviewed"}:
@@ -205,11 +211,20 @@ def upload_campaign_csv(campaign_id):
 
 @production.post("/api/campaigns/<campaign_id>/validate")
 @login_required
-@limiter.limit("10 per hour")
+@limiter.limit("30 per hour", key_func=_user_rate_key)
 def validate_campaign(campaign_id):
     campaign = owned_campaign(campaign_id, admin_ok=False)
     if not campaign.total_count:
         return jsonify({"error": "Upload recipients first."}), 409
+    active_job = db.session.scalar(
+        select(ValidationJob)
+        .where(ValidationJob.campaign_id == campaign.id,
+               ValidationJob.state.in_(("queued", "running")))
+        .order_by(ValidationJob.created_at.desc())
+    )
+    if active_job:
+        return jsonify({"job_id": active_job.id, "state": active_job.state,
+                        "existing": True}), 202
     data = request.get_json(silent=True) or {}
     policy = str(data.get("policy", "balanced")).lower()
     smtp_enabled = bool(data.get("smtp_enabled", False))
@@ -232,6 +247,7 @@ def validate_campaign(campaign_id):
 
 @production.get("/api/jobs/<job_id>")
 @login_required
+@limiter.limit("90 per minute; 3000 per hour", key_func=_user_rate_key)
 def job_status(job_id):
     job = db.session.get(ValidationJob, job_id)
     if job:
@@ -302,7 +318,7 @@ def update_campaign_content(campaign_id):
 
 @production.post("/api/campaigns/<campaign_id>/test")
 @login_required
-@limiter.limit("10 per hour")
+@limiter.limit("30 per hour", key_func=_user_rate_key)
 def test_campaign(campaign_id):
     campaign = owned_campaign(campaign_id, admin_ok=False)
     if not campaign.subject or not campaign.selected_count:
@@ -333,7 +349,7 @@ def test_campaign(campaign_id):
 
 @production.post("/api/campaigns/<campaign_id>/queue")
 @login_required
-@limiter.limit("10 per hour")
+@limiter.limit("30 per hour", key_func=_user_rate_key)
 def queue_campaign(campaign_id):
     campaign = owned_campaign(campaign_id, admin_ok=False)
     data = request.get_json(silent=True) or {}
