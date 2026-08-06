@@ -295,7 +295,9 @@ def update_campaign_content(campaign_id):
     campaign.content_hash = campaign_hash(campaign)
     audit("campaign.content_updated", "campaign", campaign.id)
     db.session.commit()
-    return jsonify({"campaign": _campaign_payload(campaign)})
+    payload = _campaign_payload(campaign)
+    payload.update({"html_content": campaign.html_content, "text_content": campaign.text_content})
+    return jsonify({"campaign": payload})
 
 
 @production.post("/api/campaigns/<campaign_id>/test")

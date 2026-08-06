@@ -120,6 +120,15 @@ class ProductionWorkflowTests(unittest.TestCase):
                                           headers={"Idempotency-Key": "one"})
         self.assertEqual(queue_response.status_code, 409)
 
+    def test_content_save_returns_sanitized_preview_content(self):
+        campaign_id = self.client.post("/api/campaigns").json["campaign"]["id"]
+        response = self.client.put(f"/api/campaigns/{campaign_id}/content", json={
+            "subject": "Hello", "html_content": '<p onclick="bad()">Hi</p>', "text_content": "Hi"
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["campaign"]["html_content"], "<p>Hi</p>")
+        self.assertEqual(response.json["campaign"]["text_content"], "Hi")
+
 
 if __name__ == "__main__":
     unittest.main()
