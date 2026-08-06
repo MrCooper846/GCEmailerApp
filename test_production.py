@@ -86,6 +86,17 @@ class ProductionWorkflowTests(unittest.TestCase):
         self.assertIn("Hello", cleaned)
         self.assertNotIn("onclick", cleaned)
         self.assertNotIn("<script", cleaned)
+        self.assertNotIn("alert(1)", cleaned)
+
+    def test_template_html_does_not_render_head_css_as_email_text(self):
+        cleaned = sanitize_email_html(
+            '<!doctype html><html><head><title>Calendar</title>'
+            '<style>@media only screen { .email { width: 100%; } }</style>'
+            '</head><body><div class="email">Visible email</div></body></html>'
+        )
+        self.assertIn("Visible email", cleaned)
+        self.assertNotIn("Calendar", cleaned)
+        self.assertNotIn("@media", cleaned)
 
     def test_content_change_requires_new_test(self):
         with app.app_context():

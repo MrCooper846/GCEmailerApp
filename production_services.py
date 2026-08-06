@@ -39,8 +39,19 @@ def normalize_email(value: str) -> str:
 
 def sanitize_email_html(value: str) -> str:
     """Keep email-compatible markup while removing executable browser content."""
-    return bleach.clean(
+    # Bleach strips disallowed tags but deliberately preserves their text. That
+    # is useful for ordinary formatting tags, but makes <title> and <style>
+    # contents appear as visible text when a complete HTML email is pasted.
+    # Remove raw-text metadata/executable blocks before applying Bleach's
+    # attribute, protocol and CSS safety rules.
+    value = re.sub(
+        r"<\s*(head|style|title|script)\b[^>]*>.*?<\s*/\s*\1\s*>",
+        "",
         value or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return bleach.clean(
+        value,
         tags=ALLOWED_TEMPLATE_TAGS,
         attributes=ALLOWED_TEMPLATE_ATTRIBUTES,
         protocols={"http", "https", "mailto", "tel", "cid"},
