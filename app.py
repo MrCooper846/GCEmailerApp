@@ -687,7 +687,10 @@ def oauth2_callback():
         user = db.session.scalar(db.select(User).where(User.email == email))
         if not user:
             role = 'admin' if email in app.config['INITIAL_ADMIN_EMAILS'] else 'user'
-            user = User(email=email, display_name=profile['name'], role=role)
+            # Column defaults are applied during INSERT; before the first flush
+            # a new model instance still has enabled=None, which the disabled
+            # account check below would incorrectly reject.
+            user = User(email=email, display_name=profile['name'], role=role, enabled=True)
             db.session.add(user)
         if not user.enabled:
             raise ValueError('This office account has been disabled by an administrator.')

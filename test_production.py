@@ -1,6 +1,7 @@
 """Production security and multi-user workflow tests."""
 import io
 import unittest
+from unittest.mock import patch
 
 from app import app
 from config import ProductionConfig
@@ -25,7 +26,7 @@ class ProductionWorkflowTests(unittest.TestCase):
     def tearDownClass(cls):
         with app.app_context():
             for email in ["owner@gulfconferences.co.uk", "other@gulfconferences.co.uk",
-                          "admin@gulfconferences.co.uk"]:
+                          "admin@gulfconferences.co.uk", "first.login@gulfconferences.co.uk"]:
                 user = User.query.filter_by(email=email).first()
                 if user:
                     for campaign in user.campaigns.all():
@@ -54,6 +55,27 @@ class ProductionWorkflowTests(unittest.TestCase):
         client = app.test_client()
         self.assertEqual(client.get("/api/me").status_code, 401)
         self.assertEqual(client.get("/").status_code, 302)
+
+    def test_first_company_login_creates_enabled_user(self):
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["oauth_state"] = "expected-state"
+        profile = {
+            "email": "first.login@gulfconferences.co.uk",
+            "name": "First Login",
+            "verified_email": True,
+        }
+        with patch("app.exchange_code", return_value=object()), \
+             patch("app.get_profile", return_value=profile), \
+             patch("app.save_encrypted_credentials"):
+            response = client.get("/oauth2/callback?code=test-code&state=expected-state")
+        self.assertEqual(response.status_code, 302)
+        with app.app_context():
+            user = User.query.filter_by(email=profile["email"]).one()
+            self.assertTrue(user.enabled)
+            self.assertEqual(user.role, "user")
+        with client.session_transaction() as session:
+            self.assertEqual(session["user_id"], user.id)
 
     def test_campaign_is_owned_and_cross_user_hidden(self):
         response = self.client.post("/api/campaigns")
