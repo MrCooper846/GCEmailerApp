@@ -95,6 +95,9 @@ class ProductionWorkflowTests(unittest.TestCase):
         self.assertIn(b"Send test to me", response.data)
         self.assertIn(b"await persistVisibleContent();status('Sending test email", response.data)
         self.assertIn(b"button.disabled=true", response.data)
+        self.assertIn(b"Validating\xe2\x80\xa6", response.data)
+        self.assertIn(b"Uploading\xe2\x80\xa6", response.data)
+        self.assertIn(b"Sending test\xe2\x80\xa6", response.data)
 
     def test_legacy_mutations_are_disabled_when_hosted(self):
         response = self.client.post("/api/validate", json={})
