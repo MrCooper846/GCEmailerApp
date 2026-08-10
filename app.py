@@ -202,6 +202,16 @@ def guess_name_column(df: pd.DataFrame) -> str:
     return None
 
 
+def guess_company_column(df: pd.DataFrame) -> str:
+    """Auto-detect a company, organisation, or institution column."""
+    import re
+    for pattern in [r'company', r'organi[sz]ation', r'institution', r'employer']:
+        candidates = [c for c in df.columns if re.search(pattern, c.strip().lower())]
+        if candidates:
+            return candidates[0]
+    return None
+
+
 def list_email_templates() -> list:
     """Return valid saved templates without exposing their file paths."""
     if app.config.get('REQUIRE_AUTH'):
@@ -427,12 +437,14 @@ def upload_csv():
         # Auto-detect columns
         email_col = guess_email_column(df)
         name_col = guess_name_column(df)
+        company_col = guess_company_column(df)
         
         # Store in session
         session['csv_file'] = unique_filename
         session['total_rows'] = len(df)
         session['email_col'] = email_col
         session['name_col'] = name_col
+        session['company_col'] = company_col
         session['columns'] = df.columns.tolist()
         
         flash(f'Successfully uploaded {len(df)} contacts', 'success')
@@ -454,6 +466,8 @@ def configure_columns():
                          columns=session.get('columns', []),
                          email_col=session.get('email_col'),
                          name_col=session.get('name_col'),
+                         company_col=session.get('company_col'),
+                         title_col=session.get('title_col'),
                          total_rows=session.get('total_rows'))
 
 
@@ -462,6 +476,8 @@ def set_columns():
     """Save column configuration and start validation"""
     session['email_col'] = request.form.get('email_col')
     session['name_col'] = request.form.get('name_col')
+    session['title_col'] = request.form.get('title_col')
+    session['company_col'] = request.form.get('company_col')
     
     if not session.get('email_col'):
         flash('Email column is required', 'error')
@@ -728,6 +744,8 @@ def compose_email():
     return render_template('compose.html',
                          valid_count=session.get('valid_count'),
                          name_col=session.get('name_col'),
+                         title_col=session.get('title_col'),
+                         company_col=session.get('company_col'),
                          saved_templates=list_email_templates())
 
 
@@ -967,6 +985,7 @@ def preview_email():
     first_recipient = recipients.iloc[0] if not recipients.empty else pd.Series(dtype=object)
     email_col = session.get('email_col')
     name_col = session.get('name_col')
+    company_col = session.get('company_col')
 
     sample_email = ''
     if email_col and email_col in recipients.columns:
@@ -980,9 +999,15 @@ def preview_email():
         if name_value is not None and not pd.isna(name_value):
             sample_name = str(name_value).strip()
 
-    preview_subject = render_placeholders(subject, sample_name)
-    preview_html = inline_images_for_preview(render_placeholders(html_content, sample_name))
-    preview_text = render_placeholders(text_content, sample_name)
+    sample_company = ''
+    if company_col and company_col in recipients.columns:
+        company_value = first_recipient.get(company_col)
+        if company_value is not None and not pd.isna(company_value):
+            sample_company = str(company_value).strip()
+
+    preview_subject = render_placeholders(subject, sample_name, sample_company)
+    preview_html = inline_images_for_preview(render_placeholders(html_content, sample_name, sample_company))
+    preview_text = render_placeholders(text_content, sample_name, sample_company)
 
     return render_template('preview.html',
                          subject=preview_subject,
@@ -990,6 +1015,7 @@ def preview_email():
                          text_preview=preview_text,
                          sample_email=sample_email,
                          sample_name=sample_name,
+                         sample_company=sample_company,
                          valid_count=session.get('valid_count'))
 
 
@@ -1022,6 +1048,7 @@ def send_emails():
         
         email_col = session['email_col']
         name_col = session.get('name_col')
+        company_col = session.get('company_col')
         subject = session['subject']
         html_content = session['html_content']
         text_content = session['text_content']
@@ -1041,7 +1068,7 @@ def send_emails():
 
         worker = threading.Thread(
             target=run_send_job,
-            args=(job_id, df, email_col, name_col, subject, html_content,
+            args=(job_id, df, email_col, name_col, company_col, subject, html_content,
                   text_content, creds, google_email, app.config['EMAIL_ASSET_FOLDER']),
             daemon=True,
         )
@@ -1053,7 +1080,7 @@ def send_emails():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def run_send_job(job_id, df, email_col, name_col, subject, html_content,
+def run_send_job(job_id, df, email_col, name_col, company_col, subject, html_content,
                  text_content, creds, google_email, inline_image_folder):
     """Send a campaign and record progress for the polling endpoint."""
     def update_progress(current, total, message):
@@ -1072,6 +1099,7 @@ def run_send_job(job_id, df, email_col, name_col, subject, html_content,
             df=df,
             email_col=email_col,
             name_col=name_col,
+            company_col=company_col,
             subject=subject,
             html_content=html_content,
             text_content=text_content,

@@ -174,6 +174,11 @@ def upload_campaign_csv(campaign_id):
     name_column = request.form.get("name_column") or next(
         (column for column in frame.columns if "name" in column.lower()), None
     )
+    company_column = request.form.get("company_column") or next(
+        (column for column in frame.columns
+         if any(term in column.lower() for term in ("company", "organisation", "organization", "institution"))),
+        None,
+    )
     if not email_column:
         return jsonify({"error": "No email column could be identified."}), 400
 
@@ -196,17 +201,20 @@ def upload_campaign_csv(campaign_id):
             original_email=original,
             normalized_email=normalized,
             recipient_name=str(row[name_column]).strip() if name_column else "",
+            recipient_company=str(row[company_column]).strip() if company_column else "",
         ))
     campaign.source_filename = Path(uploaded.filename).name[:255]
     campaign.upload_path = str(upload_path)
     campaign.email_column = email_column
     campaign.name_column = name_column
+    campaign.company_column = company_column
     campaign.total_count = len(seen)
     campaign.state = "draft"
     campaign.tested_hash = None
     audit("campaign.uploaded", "campaign", campaign.id, {"rows": len(seen)})
     db.session.commit()
-    return jsonify({"campaign": _campaign_payload(campaign), "columns": list(frame.columns)})
+    return jsonify({"campaign": _campaign_payload(campaign), "columns": list(frame.columns),
+                    "company_column": company_column})
 
 
 @production.post("/api/campaigns/<campaign_id>/validate")
@@ -269,7 +277,8 @@ def get_recipients(campaign_id):
     campaign = owned_campaign(campaign_id)
     recipients = campaign.recipients.order_by(CampaignRecipient.source_row).limit(10000).all()
     return jsonify({"recipients": [{"id": item.id, "email": item.normalized_email,
-                                    "name": item.recipient_name, "selected": item.selected,
+                                    "name": item.recipient_name, "company": item.recipient_company,
+                                    "selected": item.selected,
                                     "suppressed": item.suppressed, "validation": item.validation,
                                     "send_status": item.send_status} for item in recipients]})
 
@@ -331,7 +340,8 @@ def test_campaign(campaign_id):
     first = campaign.recipients.filter_by(selected=True, suppressed=False).first()
     message = build_message(current_user().email, first.recipient_name or "", campaign.subject,
                             campaign.html_content, campaign.text_content, "me",
-                            inline_image_folder=current_app.config["EMAIL_ASSET_FOLDER"])
+                            inline_image_folder=current_app.config["EMAIL_ASSET_FOLDER"],
+                            company=first.recipient_company or "")
     try:
         response = send_one_gmail_message(credentials, message)
     except HttpError:
@@ -415,15 +425,17 @@ def campaign_results(campaign_id):
     if request.args.get("format") == "csv":
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["email", "name", "status", "gmail_message_id", "error_category"])
+        writer.writerow(["email", "name", "company", "status", "gmail_message_id", "error_category"])
         for item in rows:
             writer.writerow([_csv_safe(item.normalized_email), _csv_safe(item.recipient_name),
+                             _csv_safe(item.recipient_company),
                              _csv_safe(item.send_status), _csv_safe(item.gmail_message_id),
                              _csv_safe(item.error_category)])
         return Response(output.getvalue(), mimetype="text/csv",
                         headers={"Content-Disposition": f"attachment; filename=campaign-{campaign.id}-results.csv"})
     return jsonify({"campaign": _campaign_payload(campaign), "recipients": [
-        {"email": item.normalized_email, "name": item.recipient_name, "status": item.send_status,
+        {"email": item.normalized_email, "name": item.recipient_name,
+         "company": item.recipient_company, "status": item.send_status,
          "gmail_message_id": item.gmail_message_id, "error_category": item.error_category}
         for item in rows
     ]})

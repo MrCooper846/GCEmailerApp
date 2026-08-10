@@ -38,6 +38,7 @@ def send_email_campaign_gmail(
     text_content: str,
     credentials,
     inline_image_folder: Optional[str] = None,
+    company_col: Optional[str] = None,
     progress_callback=None,
 ) -> dict:
     if not credentials:
@@ -60,13 +61,18 @@ def send_email_campaign_gmail(
             name_value = row[name_col]
             if pd.notna(name_value):
                 first_name = str(name_value).strip()
+        company = ""
+        if company_col and company_col in df.columns:
+            company_value = row[company_col]
+            if pd.notna(company_value):
+                company = str(company_value).strip()
         row_subject = str(row.get("ai_subject", "")).strip() or subject
         row_html = str(row.get("ai_html_content", "")).strip() or html_content
         row_text = str(row.get("ai_text_content", "")).strip() or text_content
         try:
             msg = build_message(
                 email, first_name, row_subject, row_html, row_text,
-                email_from="me", inline_image_folder=inline_image_folder,
+                email_from="me", inline_image_folder=inline_image_folder, company=company,
             )
             messages.append(msg)
         except Exception as e:

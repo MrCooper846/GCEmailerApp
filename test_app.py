@@ -249,6 +249,20 @@ class TestEmailSenderService(unittest.TestCase):
         self.assertIn("Hi Jane", msg_str)
         self.assertNotIn("{{FirstName}}", msg_str)
 
+    def test_build_message_company_personalization(self):
+        msg = build_message(
+            to_addr="jane@example.com",
+            first_name="Jane",
+            company="Example University",
+            subject="For {{Company}}",
+            html_content="<p>Dear {{FirstName}} at {{ Company }}</p>",
+            text_content="Dear {{FirstName}} at {{Company}}",
+            email_from="sender@example.com",
+        )
+        msg_str = msg.as_string()
+        self.assertIn("Example University", msg_str)
+        self.assertNotIn("{{Company}}", msg_str)
+
     def test_build_message_embeds_cid_image(self):
         """CID references become inline multipart/related image parts."""
         with tempfile.TemporaryDirectory() as asset_folder:
@@ -318,24 +332,26 @@ class TestFlaskApp(unittest.TestCase):
     def test_preview_uses_first_selected_recipient(self):
         """Preview renders placeholders with the first selected recipient."""
         recipients = pd.DataFrame([
-            {'Email': '[email protected]', 'FirstName': 'Alice'},
-            {'Email': '[email protected]', 'FirstName': 'Bob'},
+            {'Email': '[email protected]', 'FirstName': 'Alice', 'Company': 'Alpha University'},
+            {'Email': '[email protected]', 'FirstName': 'Bob', 'Company': 'Beta College'},
         ])
         with self.client.session_transaction() as sess:
             sess['final_df_json'] = recipients.to_json(orient='records')
             sess['email_col'] = 'Email'
             sess['name_col'] = 'FirstName'
+            sess['company_col'] = 'Company'
             sess['valid_count'] = 2
 
         response = self.client.post('/preview', data={
-            'subject': 'Hello {{ name }}',
-            'html_content': '<h1>Welcome {{FirstName}}</h1>',
-            'text_content': 'Welcome {{ firstname }}',
+            'subject': 'Hello {{ name }} at {{Company}}',
+            'html_content': '<h1>Welcome {{FirstName}} from {{Company}}</h1>',
+            'text_content': 'Welcome {{ firstname }} from {{ Company }}',
         })
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Hello Alice', response.data)
         self.assertIn(b'Welcome Alice', response.data)
+        self.assertIn(b'Alpha University', response.data)
         self.assertIn(b'[email protected]', response.data)
         self.assertNotIn(b'{{FirstName}}', response.data)
 

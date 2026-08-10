@@ -64,6 +64,7 @@ def send_campaign_task(campaign_id: str):
                     campaign.text_content,
                     "me",
                     inline_image_folder=_app().config["EMAIL_ASSET_FOLDER"],
+                    company=recipient.recipient_company or "",
                 )
                 response = send_one_gmail_message(credentials, message)
                 recipient.gmail_message_id = response.get("id")

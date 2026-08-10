@@ -106,10 +106,13 @@ class ProductionWorkflowTests(unittest.TestCase):
     def test_csv_upload_deduplicates_and_bounds_campaign(self):
         campaign_id = self.client.post("/api/campaigns").json["campaign"]["id"]
         response = self.client.post(f"/api/campaigns/{campaign_id}/upload", data={
-            "csv_file": (io.BytesIO(b"Email,FirstName\nA@example.com,A\na@example.com,Again\nb@example.com,B\n"), "people.csv")
+            "csv_file": (io.BytesIO(b"Email,FirstName,Company\nA@example.com,A,Alpha University\na@example.com,Again,Duplicate Ltd\nb@example.com,B,Beta College\n"), "people.csv")
         }, content_type="multipart/form-data")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["campaign"]["total"], 2)
+        self.assertEqual(response.json["company_column"], "Company")
+        recipients = self.client.get(f"/api/campaigns/{campaign_id}/recipients").json["recipients"]
+        self.assertEqual(recipients[0]["company"], "Alpha University")
 
     def test_repeated_validation_reuses_active_job(self):
         with app.app_context():
