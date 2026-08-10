@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Marketing Email Campaign{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% if config.WTF_CSRF_ENABLED %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
     {% block extra_head %}{% endblock %}
 </head>
 <body>
@@ -13,7 +14,16 @@
             <h1 class="logo">📧 Email Campaign Manager</h1>
             <div class="nav-links">
                 <a href="{{ url_for('index') }}">New Campaign</a>
-                <a href="{{ url_for('reset') }}" class="btn-secondary">Reset</a>
+                <a href="{{ url_for('template_manager') }}">Templates</a>
+                {% if g.current_user %}
+                <span class="nav-user">{{ g.current_user.email }} · {{ g.current_user.role }}</span>
+                <form action="{{ url_for('production.auth_logout') }}" method="post" class="nav-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn-secondary">Sign out</button>
+                </form>
+                {% else %}
+                <a href="{{ url_for('login_google') }}">Sign in</a>
+                {% endif %}
             </div>
         </div>
     </nav>
@@ -39,6 +49,27 @@
         </div>
     </footer>
 
+    {% if config.WTF_CSRF_ENABLED %}<script>
+    (() => {
+        const token = document.querySelector('meta[name="csrf-token"]')?.content;
+        document.querySelectorAll('form[method="post" i]').forEach((form) => {
+            if (!form.querySelector('input[name="csrf_token"]')) {
+                const input = document.createElement('input');
+                input.type = 'hidden'; input.name = 'csrf_token'; input.value = token;
+                form.appendChild(input);
+            }
+        });
+        const originalFetch = window.fetch;
+        window.fetch = (input, init = {}) => {
+            const method = String(init.method || 'GET').toUpperCase();
+            if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+                init.headers = new Headers(init.headers || {});
+                init.headers.set('X-CSRFToken', token);
+            }
+            return originalFetch(input, init);
+        };
+    })();
+    </script>{% endif %}
     {% block scripts %}{% endblock %}
 </body>
 </html>

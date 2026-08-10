@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}Office sign in · GC Emailer{% endblock %}
+
+{% block content %}
+<div class="card auth-card">
+    <h2>Sign in to GC Emailer</h2>
+    <p class="subtitle">Use your verified @{{ allowed_domain }} Google Workspace account.</p>
+    <a class="btn-primary btn-large" href="{{ url_for('login_google') }}">Continue with Google</a>
+</div>
+{% endblock %}

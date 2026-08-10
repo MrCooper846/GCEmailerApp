@@ -13,9 +13,39 @@
     </div>
 
     <h2>Email Validation</h2>
-    <p class="subtitle">We'll check each email address to ensure it's valid and won't bounce. This may take a few minutes.</p>
+    <p class="subtitle">Syntax and mail-routing checks identify definite problems. Temporary DNS and SMTP results remain reviewable rather than being treated as confirmed invalid addresses.</p>
 
-    <div id="validationStatus" class="validation-status">
+    <div id="validationOptions" class="info-box">
+        <h3>Checks to run</h3>
+        <ul>
+            <li><strong>Syntax and domain checks:</strong> always enabled</li>
+            <li><strong>MX plus A/AAAA fallback:</strong> always enabled, with retries for temporary DNS failures</li>
+        </ul>
+        <div class="form-group">
+            <label for="validationPolicy">Risk policy</label>
+            <select id="validationPolicy">
+                <option value="balanced" {% if validation_policy == 'balanced' %}selected{% endif %}>Balanced — recommended</option>
+                <option value="strict" {% if validation_policy == 'strict' %}selected{% endif %}>Strict — review every inconclusive result</option>
+                <option value="relaxed" {% if validation_policy == 'relaxed' %}selected{% endif %}>Relaxed — definite failures only</option>
+            </select>
+        </div>
+        <div class="form-group checkbox-group">
+            <label class="checkbox-label" for="enableSmtp">
+                <input type="checkbox" id="enableSmtp"
+                       {% if smtp_default %}checked{% endif %}
+                       {% if not smtp_available %}disabled{% endif %}>
+                Run direct SMTP mailbox probing
+            </label>
+            {% if smtp_available %}
+            <p class="help-text">Optional and potentially inconclusive. Temporary responses are retried up to three times.</p>
+            {% else %}
+            <p class="help-text">Disabled until <code>VALIDATION_MAIL_FROM</code> is configured in <code>.env</code>.</p>
+            {% endif %}
+        </div>
+        <button type="button" id="startValidationButton" class="btn-primary btn-large">Start Validation</button>
+    </div>
+
+    <div id="validationStatus" class="validation-status" style="display:none;">
         <div class="spinner"></div>
         <p id="statusText">Preparing validation...</p>
         <div class="progress-bar">
@@ -46,17 +76,22 @@
 
 {% block scripts %}
 <script>
-// Auto-start validation on page load
-window.addEventListener('load', () => {
-    startValidation();
-});
+document.getElementById('startValidationButton').addEventListener('click', startValidation);
 
 async function startValidation() {
     const statusText = document.getElementById('statusText');
     const progressText = document.getElementById('progressText');
     const progressFill = document.getElementById('progressFill');
+    const startButton = document.getElementById('startValidationButton');
+    const doSmtp = document.getElementById('enableSmtp').checked;
+    const policy = document.getElementById('validationPolicy').value;
+
+    startButton.disabled = true;
+    document.getElementById('validationOptions').style.display = 'none';
+    document.getElementById('validationStatus').style.display = 'block';
     
     statusText.textContent = 'Validating email addresses... This may take a few minutes.';
+    statusText.style.color = '';
     
     // Simulate progress updates while waiting
     let fakeProgress = 0;
@@ -74,7 +109,8 @@ async function startValidation() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({ do_smtp: doSmtp, policy })
         });
         
         clearInterval(progressInterval);
@@ -99,6 +135,8 @@ async function startValidation() {
             progressFill.style.background = '#dc3545';
             statusText.textContent = 'Error: ' + (data.error || 'Unknown error');
             statusText.style.color = '#dc3545';
+            startButton.disabled = false;
+            document.getElementById('validationOptions').style.display = 'block';
             console.error('Validation error:', data.error);
         }
     } catch (error) {
@@ -107,6 +145,8 @@ async function startValidation() {
         progressFill.style.background = '#dc3545';
         statusText.textContent = 'Error: ' + error.message;
         statusText.style.color = '#dc3545';
+        startButton.disabled = false;
+        document.getElementById('validationOptions').style.display = 'block';
         console.error('Fetch error:', error);
     }
 }

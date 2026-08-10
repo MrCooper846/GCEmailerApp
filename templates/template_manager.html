@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}Template Manager - Email Campaign{% endblock %}
+
+{% block extra_head %}
+<style>
+    .template-manager { display:grid; grid-template-columns:minmax(220px, 280px) 1fr; gap:24px; align-items:start; }
+    .template-sidebar { position:sticky; top:20px; }
+    .template-list { display:flex; flex-direction:column; gap:8px; margin:16px 0; }
+    .template-list button { width:100%; text-align:left; }
+    .template-list button.active { outline:3px solid rgba(0,123,255,.25); }
+    .template-editor-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .template-preview { width:100%; min-height:620px; border:1px solid var(--border-color); border-radius:8px; background:#fff; }
+    .danger-button { background:var(--danger-color); color:#fff; }
+    @media (max-width:900px) {
+        .template-manager, .template-editor-grid { grid-template-columns:1fr; }
+        .template-sidebar { position:static; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Template Manager</h2>
+    <p class="subtitle">Create, preview, edit, rename, and delete templates before starting a campaign.</p>
+    {% if not can_edit %}<div class="info-box">You can view and use shared templates. A template editor or administrator must make changes.</div>{% endif %}
+
+    <div class="template-manager">
+        <aside class="template-sidebar info-box">
+            <button type="button" id="newTemplateButton" class="btn-primary">New Template</button>
+            <div id="templateList" class="template-list">
+                {% for template in saved_templates %}
+                <button type="button" class="btn-secondary template-choice" data-id="{{ template.id }}">
+                    {{ template.name }}
+                </button>
+                {% else %}
+                <p id="emptyTemplateMessage" class="help-text">No templates saved yet.</p>
+                {% endfor %}
+            </div>
+        </aside>
+
+        <section>
+            <div class="form-group">
+                <label for="managerTemplateName">Template name</label>
+                <input type="text" id="managerTemplateName" maxlength="100" placeholder="e.g., Autumn conference invitation">
+            </div>
+            <div class="form-group">
+                <label for="managerSubject">Subject</label>
+                <input type="text" id="managerSubject" placeholder="Email subject">
+            </div>
+
+            <div class="info-box">
+                <label for="managerInlineImage"><strong>Embed an image</strong></label>
+                <input type="file" id="managerInlineImage" accept="image/png,image/jpeg,image/gif">
+                <button type="button" id="managerUploadImageButton" class="btn-secondary">Upload and Insert</button>
+                <p id="managerImageStatus" class="help-text" aria-live="polite"></p>
+            </div>
+
+            <div class="template-editor-grid">
+                <div>
+                    <div class="form-group">
+                        <label for="managerHtml">HTML version</label>
+                        <textarea id="managerHtml" rows="28" placeholder="Paste or write HTML here"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="managerText">Plain-text fallback</label>
+                        <textarea id="managerText" rows="12" placeholder="Plain-text version"></textarea>
+                    </div>
+                </div>
+                <div>
+                    <label><strong>HTML preview</strong></label>
+                    <iframe id="managerPreview" class="template-preview" sandbox="allow-popups" title="Email template preview"></iframe>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button type="button" id="saveManagerTemplateButton" class="btn-primary">Save Template</button>
+                <button type="button" id="deleteManagerTemplateButton" class="btn-secondary danger-button" disabled>Delete Template</button>
+            </div>
+            <p id="managerStatus" class="help-text" aria-live="polite"></p>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const canEditTemplates = {{ can_edit|tojson }};
+let currentTemplateId = null;
+let currentTemplateVersion = null;
+const templateList = document.getElementById('templateList');
+const nameField = document.getElementById('managerTemplateName');
+const subjectField = document.getElementById('managerSubject');
+const htmlField = document.getElementById('managerHtml');
+const textField = document.getElementById('managerText');
+const previewFrame = document.getElementById('managerPreview');
+const deleteButton = document.getElementById('deleteManagerTemplateButton');
+const statusText = document.getElementById('managerStatus');
+const imageInput = document.getElementById('managerInlineImage');
+const imageStatus = document.getElementById('managerImageStatus');
+if (!canEditTemplates) {
+    [nameField, subjectField, htmlField, textField, imageInput].forEach(node => node.disabled = true);
+    ['newTemplateButton', 'saveManagerTemplateButton', 'deleteManagerTemplateButton'].forEach(id => document.getElementById(id).disabled = true);
+}
+
+templateList.addEventListener('click', event => {
+    const button = event.target.closest('.template-choice');
+    if (button) loadTemplate(button.dataset.id);
+});
+
+document.getElementById('newTemplateButton').addEventListener('click', () => {
+    currentTemplateId = null;
+    currentTemplateVersion = null;
+    nameField.value = '';
+    subjectField.value = '';
+    htmlField.value = '';
+    textField.value = '';
+    deleteButton.disabled = true;
+    document.querySelectorAll('.template-choice').forEach(button => button.classList.remove('active'));
+    updatePreview();
+    setStatus('New template ready.');
+});
+
+async function loadTemplate(templateId) {
+    try {
+        const response = await fetch(`/api/templates/${encodeURIComponent(templateId)}`, { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load template.');
+        currentTemplateId = templateId;
+        currentTemplateVersion = data.template.version ?? null;
+        nameField.value = data.template.name || '';
+        subjectField.value = data.template.subject || '';
+        htmlField.value = data.template.html_content || '';
+        textField.value = data.template.text_content || '';
+        deleteButton.disabled = false;
+        document.querySelectorAll('.template-choice').forEach(button => {
+            button.classList.toggle('active', button.dataset.id === templateId);
+        });
+        updatePreview();
+        setStatus(`Loaded “${data.template.name}”.`);
+    } catch (error) {
+        setStatus(error.message, true);
+    }
+}
+
+document.getElementById('saveManagerTemplateButton').addEventListener('click', async () => {
+    const payload = {
+        name: nameField.value,
+        subject: subjectField.value,
+        html_content: htmlField.value,
+        text_content: textField.value,
+        version: currentTemplateVersion
+    };
+    const endpoint = currentTemplateId
+        ? `/api/templates/${encodeURIComponent(currentTemplateId)}`
+        : '{{ url_for("save_email_template") }}';
+    const previousTemplateId = currentTemplateId;
+    try {
+        const response = await fetch(endpoint, {
+            method: currentTemplateId ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to save template.');
+        if (previousTemplateId && previousTemplateId !== data.template.id) {
+            templateList.querySelector(`[data-id="${CSS.escape(previousTemplateId)}"]`)?.remove();
+        }
+        currentTemplateId = data.template.id;
+        currentTemplateVersion = data.template.version ?? currentTemplateVersion;
+        upsertTemplateChoice(data.template);
+        deleteButton.disabled = false;
+        setStatus(data.message);
+    } catch (error) {
+        setStatus(error.message, true);
+    }
+});
+
+deleteButton.addEventListener('click', async () => {
+    if (!currentTemplateId || !confirm(`Delete “${nameField.value}”? This cannot be undone.`)) return;
+    try {
+        const response = await fetch(`/api/templates/${encodeURIComponent(currentTemplateId)}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to delete template.');
+        const oldId = currentTemplateId;
+        document.getElementById('newTemplateButton').click();
+        templateList.querySelector(`[data-id="${CSS.escape(oldId)}"]`)?.remove();
+        setStatus(data.message);
+    } catch (error) {
+        setStatus(error.message, true);
+    }
+});
+
+document.getElementById('managerUploadImageButton').addEventListener('click', async () => {
+    if (!imageInput.files.length) {
+        setImageStatus('Choose an image first.', true);
+        return;
+    }
+    const formData = new FormData();
+    formData.append('image', imageInput.files[0]);
+    setImageStatus('Uploading...');
+    try {
+        const response = await fetch('{{ url_for("upload_email_asset") }}', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Unable to upload image.');
+        const start = htmlField.selectionStart;
+        const insertion = `\n${data.snippet}\n`;
+        htmlField.setRangeText(insertion, start, htmlField.selectionEnd, 'end');
+        imageInput.value = '';
+        updatePreview();
+        setImageStatus(`${data.message} Image inserted.`);
+    } catch (error) {
+        setImageStatus(error.message, true);
+    }
+});
+
+function upsertTemplateChoice(template) {
+    document.getElementById('emptyTemplateMessage')?.remove();
+    let button = templateList.querySelector(`[data-id="${CSS.escape(template.id)}"]`);
+    document.querySelectorAll('.template-choice').forEach(item => item.classList.remove('active'));
+    if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-secondary template-choice';
+        templateList.appendChild(button);
+    }
+    button.dataset.id = template.id;
+    button.textContent = template.name;
+    button.classList.add('active');
+}
+
+function updatePreview() {
+    previewFrame.srcdoc = htmlField.value.replace(
+        /cid:([A-Za-z0-9][A-Za-z0-9_.-]*)/gi,
+        '/email-assets/$1'
+    );
+}
+
+htmlField.addEventListener('input', updatePreview);
+
+function setStatus(message, isError = false) {
+    statusText.textContent = message;
+    statusText.style.color = isError ? '#c0392b' : '#2e7d32';
+}
+
+function setImageStatus(message, isError = false) {
+    imageStatus.textContent = message;
+    imageStatus.style.color = isError ? '#c0392b' : '#2e7d32';
+}
+
+updatePreview();
+</script>
+{% endblock %}

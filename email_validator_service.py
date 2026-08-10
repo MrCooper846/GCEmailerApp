@@ -44,6 +44,9 @@ ROLE_LOCALPARTS = {
 
 DEFAULT_DNS_TIMEOUT = 5.0
 DEFAULT_SMTP_TIMEOUT = 10.0
+DEFAULT_DNS_ATTEMPTS = 3
+DEFAULT_SMTP_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 0.5
 DEFAULT_HELO = socket.getfqdn() or "validator.example.com"
 EMAIL_RE = re.compile(r'([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})')
 
@@ -61,7 +64,7 @@ MX_BUCKET_LIMITS = {
 
 SMTP_VALID_SET = {"valid"}
 SMTP_HARD_SET = {"invalid"}
-SMTP_SOFT_SET = {"tempfail", "blocked", "error", "unknown", "not_tested"}
+SMTP_SOFT_SET = {"tempfail", "blocked", "error", "unknown", "not_tested", "mailbox_full"}
 
 
 class Cache:
@@ -89,6 +92,10 @@ class Cache:
                 smtp_msg TEXT,
                 catch_all TEXT,
                 mailbox_full INTEGER,
+                dns_status TEXT,
+                dns_msg TEXT,
+                dns_attempts INTEGER,
+                smtp_attempts INTEGER,
                 ts INTEGER
             );
             CREATE TABLE IF NOT EXISTS mx_cache (
@@ -96,10 +103,23 @@ class Cache:
                 mx_ok INTEGER,
                 mx_host TEXT,
                 error TEXT,
+                status TEXT,
+                attempts INTEGER,
                 ts INTEGER
             );
             """)
+            self._ensure_column("email_cache", "dns_status", "TEXT")
+            self._ensure_column("email_cache", "dns_msg", "TEXT")
+            self._ensure_column("email_cache", "dns_attempts", "INTEGER")
+            self._ensure_column("email_cache", "smtp_attempts", "INTEGER")
+            self._ensure_column("mx_cache", "status", "TEXT")
+            self._ensure_column("mx_cache", "attempts", "INTEGER")
             self.conn.commit()
+
+    def _ensure_column(self, table: str, column: str, column_type: str):
+        columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
     def _status_ttl(self, smtp_status: Optional[str]) -> int:
         if smtp_status in SMTP_VALID_SET or smtp_status in SMTP_HARD_SET:
@@ -116,6 +136,9 @@ class Cache:
         data = dict(zip(cols, row))
         if force:
             return None
+        # Refresh records written before detailed DNS/SMTP outcomes were added.
+        if not data.get("dns_status"):
+            return None
         ttl = self._status_ttl(data.get("smtp_status"))
         if ttl > 0 and (time.time() - data["ts"]) > ttl:
             return None
@@ -130,8 +153,9 @@ class Cache:
                 """
                 INSERT INTO email_cache(email, normalized, bounce_risk, reasons, mx_ok,
                                         suggestion, smtp_status, smtp_code, smtp_msg,
-                                        catch_all, mailbox_full, ts)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                                        catch_all, mailbox_full, dns_status, dns_msg,
+                                        dns_attempts, smtp_attempts, ts)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(email) DO UPDATE SET
                     normalized=excluded.normalized,
                     bounce_risk=excluded.bounce_risk,
@@ -143,6 +167,10 @@ class Cache:
                     smtp_msg=excluded.smtp_msg,
                     catch_all=excluded.catch_all,
                     mailbox_full=excluded.mailbox_full,
+                    dns_status=excluded.dns_status,
+                    dns_msg=excluded.dns_msg,
+                    dns_attempts=excluded.dns_attempts,
+                    smtp_attempts=excluded.smtp_attempts,
                     ts=excluded.ts
                 """,
                 (
@@ -156,40 +184,63 @@ class Cache:
                     res.get("smtp_msg"),
                     res.get("catch_all"),
                     int(bool(res.get("mailbox_full"))),
+                    res.get("dns_status"),
+                    res.get("dns_msg"),
+                    res.get("dns_attempts"),
+                    res.get("smtp_attempts"),
                     int(time.time()),
                 ),
             )
             self.conn.commit()
 
     def get_mx(self, domain: str, force: bool = False):
+        details = self.get_mx_details(domain, force=force)
+        if details is None:
+            return None
+        return (details["mx_ok"], details["error"], details["mx_host"])
+
+    def get_mx_details(self, domain: str, force: bool = False):
         with self.lock:
             cur = self.conn.execute(
-                "SELECT mx_ok, mx_host, error, ts FROM mx_cache WHERE domain=?",
+                "SELECT mx_ok, mx_host, error, status, attempts, ts FROM mx_cache WHERE domain=?",
                 (domain,),
             )
             row = cur.fetchone()
         if not row:
             return None
-        mx_ok, mx_host, err, ts = row
+        mx_ok, mx_host, err, status, attempts, ts = row
         if force:
             return None
-        if self.ttl_mx_secs > 0 and (time.time() - ts) > self.ttl_mx_secs:
+        if not status:
             return None
-        return (bool(mx_ok), err, mx_host)
+        ttl = self.ttl_soft_secs if status == "temporary_failure" else self.ttl_mx_secs
+        if ttl > 0 and (time.time() - ts) > ttl:
+            return None
+        return {
+            "mx_ok": bool(mx_ok),
+            "mx_host": mx_host,
+            "error": err,
+            "status": status,
+            "attempts": attempts or 1,
+        }
 
-    def put_mx(self, domain: str, mx_ok: bool, mx_host: Optional[str], err: Optional[str]):
+    def put_mx(self, domain: str, mx_ok: bool, mx_host: Optional[str], err: Optional[str],
+               status: Optional[str] = None, attempts: int = 1):
+        status = status or ("mx" if mx_ok else "unknown")
         with self.lock:
             self.conn.execute(
                 """
-                INSERT INTO mx_cache(domain, mx_ok, mx_host, error, ts)
-                VALUES(?,?,?,?,?)
+                INSERT INTO mx_cache(domain, mx_ok, mx_host, error, status, attempts, ts)
+                VALUES(?,?,?,?,?,?,?)
                 ON CONFLICT(domain) DO UPDATE SET
                   mx_ok=excluded.mx_ok,
                   mx_host=excluded.mx_host,
                   error=excluded.error,
+                  status=excluded.status,
+                  attempts=excluded.attempts,
                   ts=excluded.ts
                 """,
-                (domain, int(mx_ok), mx_host, err, int(time.time())),
+                (domain, int(mx_ok), mx_host, err, status, attempts, int(time.time())),
             )
             self.conn.commit()
 
@@ -284,7 +335,7 @@ def classify_smtp(code: Optional[int], msg: Optional[str]) -> str:
     if code == 250:
         return "valid"
     if code == 552:
-        return "invalid"
+        return "mailbox_full"
     if 500 <= code < 600:
         return "invalid"
     if 400 <= code < 500:
@@ -305,67 +356,91 @@ def smtp_open(mx_host: str, helo: str, timeout: float) -> Optional[smtplib.SMTP]
 
 
 def batch_smtp_probe(mx_host: str, sender: str, targets: List[str],
-                     helo: str, timeout: float) -> Dict[str, Dict[str, object]]:
+                     helo: str, timeout: float,
+                     max_attempts: int = DEFAULT_SMTP_ATTEMPTS) -> Dict[str, Dict[str, object]]:
     results: Dict[str, Dict[str, object]] = {}
     gate = get_bucket(mx_host)
+    log = logging.getLogger("email_validator")
 
-    wait = gate.wait()
-    if wait > 0:
-        time.sleep(wait)
-    s = smtp_open(mx_host, helo, timeout)
+    s = None
+    connect_attempts = 0
+    for connect_attempts in range(1, max_attempts + 1):
+        wait = gate.wait()
+        if wait > 0:
+            time.sleep(wait)
+        s = smtp_open(mx_host, helo, timeout)
+        if s is not None:
+            break
+        if connect_attempts < max_attempts:
+            log.warning("SMTP connection failed for %s (attempt %s/%s)",
+                        mx_host, connect_attempts, max_attempts)
+            time.sleep(RETRY_BACKOFF_SECONDS * (2 ** (connect_attempts - 1)))
+
     if s is None:
         for t in targets:
             results[t] = {
                 "smtp_status": "error",
                 "smtp_code": None,
-                "smtp_msg": "connect_failed",
+                "smtp_msg": f"Connection failed after {connect_attempts} attempts.",
+                "smtp_attempts": connect_attempts,
                 "catch_all": "unknown",
                 "mailbox_full": False,
             }
         return results
 
-    try:
-        wait = gate.wait()
-        if wait > 0:
-            time.sleep(wait)
-        # Use a valid sender email address
-        mail_from = sender if sender and '@' in sender else "[email protected]"
-        s.mail(mail_from)
-    except Exception as e:
-        s.close()
-        for t in targets:
-            results[t] = {
-                "smtp_status": "error",
-                "smtp_code": None,
-                "smtp_msg": f"MAIL FROM failed: {e}",
-                "catch_all": "unknown",
-                "mailbox_full": False,
-            }
-        return results
-
+    mail_from = sender if sender and '@' in sender else "[email protected]"
     catchall_cache: Dict[str, str] = {}
     for addr in targets:
         domain = addr.split("@", 1)[1].lower()
-        try:
+        code = None
+        msg = "SMTP check did not run."
+        status = "error"
+        recipient_attempts = 0
+
+        for recipient_attempts in range(1, max_attempts + 1):
             wait = gate.wait()
             if wait > 0:
                 time.sleep(wait)
-            # Send MAIL FROM again for each recipient to reset transaction
             try:
-                s.rset()  # Reset the transaction
-                s.mail(mail_from)
-            except Exception:
-                pass  # If RSET fails, continue anyway
-            code, msg = s.rcpt(addr)
-            msg = msg.decode() if isinstance(msg, bytes) else (msg or "")
-        except Exception as e:
-            code, msg = None, str(e)
+                try:
+                    s.rset()
+                except Exception:
+                    pass
+                mail_code, mail_msg = s.mail(mail_from)
+                if mail_code >= 400:
+                    mail_text = mail_msg.decode() if isinstance(mail_msg, bytes) else str(mail_msg or "")
+                    code, msg = mail_code, f"MAIL FROM rejected: {mail_text}"
+                    status = "tempfail" if 400 <= mail_code < 500 else "blocked"
+                else:
+                    code, raw_msg = s.rcpt(addr)
+                    msg = raw_msg.decode() if isinstance(raw_msg, bytes) else (raw_msg or "")
+                    status = classify_smtp(code, msg)
+            except Exception as exc:
+                code, msg, status = None, str(exc), "error"
+                try:
+                    s.close()
+                except Exception:
+                    pass
+                s = None
 
-        status = classify_smtp(code, msg)
+            retryable = status in {"error", "tempfail"} or (
+                status == "blocked" and code is not None and 400 <= code < 500
+            )
+            if not retryable or recipient_attempts >= max_attempts:
+                break
+
+            log.warning("Temporary SMTP result for %s (attempt %s/%s): %s %s",
+                        addr, recipient_attempts, max_attempts, code, msg)
+            time.sleep(RETRY_BACKOFF_SECONDS * (2 ** (recipient_attempts - 1)))
+            if s is None:
+                s = smtp_open(mx_host, helo, timeout)
+                if s is None:
+                    continue
+
         mailbox_full = (code == 552)
 
         catch_all = "unknown"
-        if status == "valid":
+        if status == "valid" and s is not None:
             if domain not in catchall_cache:
                 bogus = f"{secrets.token_hex(8)}@{domain}"
                 try:
@@ -384,14 +459,16 @@ def batch_smtp_probe(mx_host: str, sender: str, targets: List[str],
             "smtp_status": status,
             "smtp_code": code,
             "smtp_msg": msg,
+            "smtp_attempts": recipient_attempts,
             "catch_all": catch_all,
             "mailbox_full": mailbox_full,
         }
 
-    try:
-        s.quit()
-    except Exception:
-        pass
+    if s is not None:
+        try:
+            s.quit()
+        except Exception:
+            pass
     return results
 
 
@@ -400,7 +477,10 @@ def compute_bounce_risk(policy: str, reasons: List[str], smtp_status: str,
     if policy not in {"strict", "balanced", "relaxed"}:
         policy = "balanced"
 
-    hard_flags = {"invalid_syntax", "no_mx", "disposable_domain", "likely_typo_domain"}
+    hard_flags = {
+        "invalid_syntax", "no_mx", "domain_not_found", "null_mx",
+        "no_mail_route", "disposable_domain", "likely_typo_domain",
+    }
     if mailbox_full:
         return True
 
@@ -414,17 +494,88 @@ def compute_bounce_risk(policy: str, reasons: List[str], smtp_status: str,
         return False
 
     if policy == "balanced":
-        if any(r in reasons for r in {"invalid_syntax", "no_mx"}):
+        if any(r in reasons for r in hard_flags):
             return True
         if smtp_status in SMTP_HARD_SET:
             return True
         return False
 
-    if any(r in reasons for r in {"invalid_syntax", "no_mx"}):
+    if any(r in reasons for r in hard_flags):
         return True
     if smtp_status in SMTP_HARD_SET:
         return True
     return False
+
+
+def resolve_mail_route(domain: str, timeout: float,
+                       max_attempts: int = DEFAULT_DNS_ATTEMPTS) -> Dict[str, object]:
+    """Resolve an explicit MX or RFC-compatible A/AAAA fallback with retries."""
+    log = logging.getLogger("email_validator")
+    last_error = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            answers = dns.resolver.resolve(domain, "MX", lifetime=timeout)
+            records = sorted(answers, key=lambda record: record.preference)
+            if records:
+                exchanges = [record.exchange.to_text(omit_final_dot=True) for record in records]
+                if any(exchange in {"", "."} for exchange in exchanges):
+                    return {
+                        "mx_ok": False, "mx_host": None, "status": "null_mx",
+                        "message": "Domain explicitly does not accept email (null MX).",
+                        "attempts": attempt,
+                    }
+                return {
+                    "mx_ok": True, "mx_host": exchanges[0], "status": "mx",
+                    "message": f"MX route found: {exchanges[0]}", "attempts": attempt,
+                }
+        except dns.resolver.NXDOMAIN as exc:
+            return {
+                "mx_ok": False, "mx_host": None, "status": "nxdomain",
+                "message": str(exc) or "Domain does not exist.", "attempts": attempt,
+            }
+        except dns.resolver.NoAnswer:
+            # RFC 5321 permits delivery to the domain's address record when MX is absent.
+            fallback_temporary_error = None
+            for record_type in ("A", "AAAA"):
+                try:
+                    addresses = dns.resolver.resolve(domain, record_type, lifetime=timeout)
+                    if addresses:
+                        return {
+                            "mx_ok": True, "mx_host": domain, "status": "implicit_mx",
+                            "message": f"No MX record; using {record_type} address fallback.",
+                            "attempts": attempt,
+                        }
+                except dns.resolver.NXDOMAIN as exc:
+                    return {
+                        "mx_ok": False, "mx_host": None, "status": "nxdomain",
+                        "message": str(exc) or "Domain does not exist.", "attempts": attempt,
+                    }
+                except dns.resolver.NoAnswer:
+                    continue
+                except (dns.resolver.Timeout, dns.resolver.NoNameservers,
+                        dns.exception.DNSException) as exc:
+                    fallback_temporary_error = exc
+            if fallback_temporary_error is None:
+                return {
+                    "mx_ok": False, "mx_host": None, "status": "no_mail_route",
+                    "message": "No MX, A, or AAAA mail route was found.", "attempts": attempt,
+                }
+            last_error = fallback_temporary_error
+        except (dns.resolver.Timeout, dns.resolver.NoNameservers,
+                dns.exception.DNSException) as exc:
+            last_error = exc
+
+        if attempt < max_attempts:
+            log.warning("Temporary DNS failure for %s (attempt %s/%s): %s",
+                        domain, attempt, max_attempts, last_error)
+            time.sleep(RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+
+    return {
+        "mx_ok": False, "mx_host": None, "status": "temporary_failure",
+        "message": str(last_error) if last_error else "DNS lookup failed temporarily.",
+        "attempts": max_attempts,
+    }
 
 
 async def evaluate_offline_async(email: str, cache: Cache,
@@ -440,6 +591,9 @@ async def evaluate_offline_async(email: str, cache: Cache,
                 "reasons": ["invalid_syntax"],
                 "mx_ok": False,
                 "mx_host": None,
+                "dns_status": "not_tested",
+                "dns_msg": "Syntax check failed.",
+                "dns_attempts": 0,
                 "suggestion": None,
             }
 
@@ -453,31 +607,38 @@ async def evaluate_offline_async(email: str, cache: Cache,
         key = ("mx", domain)
         with _dns_lock:
             cached = None if force_refresh else _dns_cache.get(key)
-        if cached is not None:
-            mx_ok, err, mx_host = cached
+        if isinstance(cached, dict):
+            dns_result = cached
         else:
-            row = cache.get_mx(domain, force=force_refresh)
+            row = cache.get_mx_details(domain, force=force_refresh)
             if row is not None:
-                mx_ok, err, mx_host = row
+                dns_result = {
+                    "mx_ok": row["mx_ok"],
+                    "mx_host": row["mx_host"],
+                    "status": row["status"],
+                    "message": row["error"],
+                    "attempts": row["attempts"],
+                }
             else:
-                try:
-                    answers = dns.resolver.resolve(domain, "MX", lifetime=dns_timeout)
-                    if answers:
-                        best = sorted(answers, key=lambda r: r.preference)[0].exchange.to_text(omit_final_dot=True)
-                        mx_ok, err, mx_host = True, None, best
-                    else:
-                        mx_ok, err, mx_host = False, "no MX records", None
-                except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers,
-                        dns.resolver.Timeout, dns.exception.DNSException) as e:
-                    mx_ok, err, mx_host = False, str(e), None
-                    import logging
-                    logging.getLogger("email_validator").warning(f"DNS lookup failed for {domain}: {e}")
-                cache.put_mx(domain, mx_ok, mx_host, err)
+                dns_result = resolve_mail_route(domain, dns_timeout)
+                if dns_result.get("status") != "temporary_failure":
+                    cache.put_mx(
+                        domain, bool(dns_result["mx_ok"]), dns_result.get("mx_host"),
+                        dns_result.get("message"), dns_result.get("status"),
+                        int(dns_result.get("attempts", 1)),
+                    )
                 with _dns_lock:
-                    _dns_cache[key] = (mx_ok, err, mx_host)
+                    _dns_cache[key] = dns_result
 
-        if not mx_ok:
-            reasons.append("no_mx")
+        dns_status = str(dns_result.get("status", "unknown"))
+        dns_reason_map = {
+            "nxdomain": "domain_not_found",
+            "null_mx": "null_mx",
+            "no_mail_route": "no_mail_route",
+            "temporary_failure": "dns_temporary_failure",
+        }
+        if dns_status in dns_reason_map:
+            reasons.append(dns_reason_map[dns_status])
 
         typo_suggestion = detect_typo(domain.lower())
         if typo_suggestion:
@@ -488,8 +649,11 @@ async def evaluate_offline_async(email: str, cache: Cache,
             "email": email,
             "normalized": normalized,
             "reasons": reasons,
-            "mx_ok": mx_ok,
-            "mx_host": mx_host,
+            "mx_ok": bool(dns_result.get("mx_ok")),
+            "mx_host": dns_result.get("mx_host"),
+            "dns_status": dns_status,
+            "dns_msg": dns_result.get("message"),
+            "dns_attempts": int(dns_result.get("attempts", 1)),
             "suggestion": suggestion,
         }
 
@@ -506,7 +670,8 @@ async def validate_email_list(df: pd.DataFrame, email_col: str,
                               mail_from: str = "[email protected]",
                               helo: str = DEFAULT_HELO,
                               policy: str = "balanced",
-                              progress_callback=None) -> pd.DataFrame:
+                              progress_callback=None,
+                              cache=None) -> pd.DataFrame:
     """
     Main validation function for web app
     progress_callback: optional function(current, total, message) for UI updates
@@ -525,7 +690,7 @@ async def validate_email_list(df: pd.DataFrame, email_col: str,
     except Exception as e:
         log.warning(f"DNS resolver config warning: {e}")
     
-    cache = Cache()
+    cache = cache or Cache()
     dns_timeout = DEFAULT_DNS_TIMEOUT
     smtp_timeout = DEFAULT_SMTP_TIMEOUT
     max_async = 32
@@ -544,10 +709,14 @@ async def validate_email_list(df: pd.DataFrame, email_col: str,
                 "bounce_risk": True,
                 "reasons": "invalid_syntax",
                 "mx_ok": False,
+                "dns_status": "not_tested",
+                "dns_msg": "Syntax check failed.",
+                "dns_attempts": 0,
                 "suggestion": None,
                 "smtp_status": "not_tested",
                 "smtp_code": None,
                 "smtp_msg": None,
+                "smtp_attempts": 0,
                 "catch_all": "unknown",
                 "mailbox_full": False,
             }
@@ -633,6 +802,7 @@ async def validate_email_list(df: pd.DataFrame, email_col: str,
             "smtp_status": "not_tested",
             "smtp_code": None,
             "smtp_msg": None,
+            "smtp_attempts": 0,
             "catch_all": "unknown",
             "mailbox_full": False,
         }
@@ -655,11 +825,14 @@ async def validate_email_list(df: pd.DataFrame, email_col: str,
             "bounce_risk": bounce_risk,
             "reasons": ",".join(reasons_lst) if reasons_lst else "",
             "mx_ok": bool(mx_ok),
+            "dns_status": off.get("dns_status", "unknown"),
+            "dns_msg": off.get("dns_msg"),
+            "dns_attempts": off.get("dns_attempts", 0),
             "suggestion": suggestion,
             **smtp_info,
         }
         final_results[idx] = res
-        if normalized is not None:
+        if normalized is not None and off.get("dns_status") != "temporary_failure":
             try:
                 cache.put_email(res)
             except Exception:

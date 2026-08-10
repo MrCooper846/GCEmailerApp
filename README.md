@@ -29,7 +29,42 @@ SMTP_PASS=your-app-specific-password
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
 SECRET_KEY=your-random-secret-key
+
+# Safer validation defaults
+VALIDATION_POLICY=balanced
+VALIDATION_ENABLE_SMTP=false
+# Required only if direct SMTP probing is enabled
+VALIDATION_MAIL_FROM=validator@your-domain.com
 ```
+
+Syntax, typo, and DNS/mail-route checks always run. Direct SMTP mailbox probing is disabled by default because many recipient servers block or defer probes, making the result inconclusive. When enabled, temporary DNS and SMTP failures are retried up to three times and shown for manual review.
+
+## Hosted office architecture
+
+Hosted staging/production use PostgreSQL for users, campaigns, recipients, encrypted Google
+credentials, shared templates, suppressions and audit history. Redis provides signed server-side
+sessions, shared verification caching and durable RQ queues. The legacy session/DataFrame workflow
+and in-process sending threads are disabled whenever `APP_ENV` is `staging` or `production`.
+
+Production safeguards include Workspace-domain authentication, role-based template/admin access,
+CSRF protection, secure cookies, shared suppressions, a 1,500-recipient cap, a required test send,
+content-hash invalidation, typed `SEND <count>` confirmation, idempotent queueing and per-recipient
+results. Staging permits test messages only and cannot queue live campaigns.
+
+See [`deploy/README.md`](deploy/README.md) for the Ubuntu 24.04, PostgreSQL, Redis, Gunicorn,
+systemd, Nginx, TLS, migration, backup and rollback process. Start from the separate staging and
+production environment examples in that directory; never reuse secrets or databases between them.
+
+Database setup and one-time content migration:
+
+```bash
+flask --app app db upgrade
+flask --app app seed-admins
+flask --app app import-legacy-templates --actor-email admin@gulfconferences.co.uk
+```
+
+Workers listen on the `campaigns`, `validation`, and `maintenance` queues. Recipient/upload data is
+removed after 30 days; aggregate campaign and audit data is retained for 12 months by default.
 
 ## Usage
 

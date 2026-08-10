@@ -6,6 +6,8 @@ import ssl
 import logging
 import smtplib
 import re
+import mimetypes
+from pathlib import Path
 from time import sleep
 from smtplib import SMTPResponseException
 from email.message import EmailMessage
@@ -13,14 +15,16 @@ import pandas as pd
 from typing import List, Optional
 
 
-def render_placeholders(content: str, first_name: str) -> str:
+def render_placeholders(content: str, first_name: str, company: str = "") -> str:
     """
     Replace supported personalization tokens with recipient values.
     """
     name = first_name.strip() or "Sir/Madam"
+    company_name = company.strip() or "your organisation"
     replacements = {
         "firstname": name,
         "name": name,
+        "company": company_name,
     }
 
     def replace(match):
@@ -31,14 +35,16 @@ def render_placeholders(content: str, first_name: str) -> str:
 
 
 def build_message(to_addr: str, first_name: str, subject: str, 
-                  html_content: str, text_content: str, email_from: str) -> EmailMessage:
+                  html_content: str, text_content: str, email_from: str,
+                  inline_image_folder: Optional[str] = None,
+                  company: str = "") -> EmailMessage:
     """
     Build an EmailMessage with personalization
     """
     # Personalize subject, HTML and text
-    subject_personalized = render_placeholders(subject, first_name)
-    html = render_placeholders(html_content, first_name)
-    text = render_placeholders(text_content, first_name)
+    subject_personalized = render_placeholders(subject, first_name, company)
+    html = render_placeholders(html_content, first_name, company)
+    text = render_placeholders(text_content, first_name, company)
 
     # Create email
     msg = EmailMessage()
@@ -50,6 +56,29 @@ def build_message(to_addr: str, first_name: str, subject: str,
     # Plain text is the fallback; HTML is the preferred representation.
     msg.set_content(text, subtype='plain')
     msg.add_alternative(html, subtype='html')
+
+    if inline_image_folder:
+        html_part = msg.get_body(preferencelist=('html',))
+        asset_folder = Path(inline_image_folder)
+        content_ids = dict.fromkeys(re.findall(r'cid:([A-Za-z0-9][A-Za-z0-9_.-]*)', html, re.IGNORECASE))
+        for content_id in content_ids:
+            if Path(content_id).name != content_id:
+                raise ValueError(f'Invalid inline image reference: {content_id}')
+            image_path = asset_folder / content_id
+            if not image_path.is_file():
+                raise ValueError(f'Inline image not found: {content_id}')
+            mime_type, _ = mimetypes.guess_type(image_path.name)
+            if not mime_type or not mime_type.startswith('image/'):
+                raise ValueError(f'Inline asset is not a supported image: {content_id}')
+            _, subtype = mime_type.split('/', 1)
+            html_part.add_related(
+                image_path.read_bytes(),
+                maintype='image',
+                subtype=subtype,
+                cid=f'<{content_id}>',
+                filename=image_path.name,
+                disposition='inline',
+            )
    
     return msg
 
@@ -66,6 +95,8 @@ def send_email_campaign(df: pd.DataFrame,
                        smtp_port: int = 465,
                        base_delay: float = 0.1,
                        max_delay: float = 10,
+                       inline_image_folder: Optional[str] = None,
+                       company_col: Optional[str] = None,
                        progress_callback=None) -> dict:
     """
     Send personalized emails to a list
@@ -107,11 +138,19 @@ def send_email_campaign(df: pd.DataFrame,
             
         first_name = ""
         if name_col and name_col in df.columns:
-            first_name = str(row[name_col]).strip()
+            name_value = row[name_col]
+            if pd.notna(name_value):
+                first_name = str(name_value).strip()
+        company = ""
+        if company_col and company_col in df.columns:
+            company_value = row[company_col]
+            if pd.notna(company_value):
+                company = str(company_value).strip()
         
         try:
-            msg = build_message(email, first_name, subject, html_content, 
-                              text_content, smtp_user)
+            msg = build_message(email, first_name, subject, html_content,
+                              text_content, smtp_user, inline_image_folder=inline_image_folder,
+                              company=company)
             messages.append(msg)
         except Exception as e:
             results["errors"].append(f"Failed to build message for {email}: {e}")

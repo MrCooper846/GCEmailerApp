@@ -1,0 +1,14 @@
+[Unit]
+Description=GC Emailer retention cleanup
+
+[Service]
+Type=oneshot
+User=gcemailer
+Group=gcemailer
+WorkingDirectory=/opt/gc-emailer/current
+EnvironmentFile=/etc/gc-emailer/production.env
+ExecStart=/opt/gc-emailer/venv/bin/flask --app app retention-cleanup
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gc-emailer /var/log/gc-emailer
+NoNewPrivileges=true

@@ -20,8 +20,20 @@ ENV/
 uploads/
 *.csv
 
+# Locally saved email templates
+email_templates/*.json
+email_templates/*.tmp
+!email_templates/Gulf_Conferences_20262027_Exhibition_Calendar.json
+
+# Locally uploaded inline email images
+email_assets/*
+!email_assets/.gitkeep
+!email_assets/Previous_Exhibition_partners.png
+
 # SQLite cache
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 *.db
 .coverage
 htmlcov/
@@ -43,3 +55,8 @@ Thumbs.db
 # Flask
 instance/
 .pytest_cache/
+
+# Production runtime data and backups
+*.dump
+*.tar.gz
+backups/
