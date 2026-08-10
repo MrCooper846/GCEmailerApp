@@ -569,6 +569,23 @@ class TestGoogleOAuth(unittest.TestCase):
             self.assertEqual(config['web']['client_id'], 'test-id')
             self.assertEqual(config['web']['client_secret'], 'test-secret')
 
+    def test_localhost_oauth_allows_http_only_in_development(self):
+        import google_oauth_service
+        with patch.object(google_oauth_service, 'REDIRECT_URI',
+                          'http://localhost:5000/oauth2/callback'), \
+             patch.dict(os.environ, {'APP_ENV': 'development'}, clear=False):
+            os.environ.pop('OAUTHLIB_INSECURE_TRANSPORT', None)
+            google_oauth_service._configure_oauth_transport()
+            self.assertEqual(os.environ['OAUTHLIB_INSECURE_TRANSPORT'], '1')
+
+    def test_non_loopback_http_oauth_is_rejected(self):
+        import google_oauth_service
+        with patch.object(google_oauth_service, 'REDIRECT_URI',
+                          'http://mailer.example.com/oauth2/callback'), \
+             patch.dict(os.environ, {'APP_ENV': 'development'}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, 'must use HTTPS'):
+                google_oauth_service._configure_oauth_transport()
+
     def test_save_and_load_credentials(self):
         """Test saving and loading credentials"""
         with patch('google_oauth_service.TOKEN_STORE', self.token_store):
